@@ -4,7 +4,8 @@
   "workspaces": [
     "apps/api",
     "apps/web",
-    "packages/db"
+    "packages/db",
+    "packages/shared"
   ],
   "scripts": {
     "dev": "bun --filter \"*\" dev",
