@@ -83,7 +83,7 @@ For Aisha's requirement (one number), compute the minimal settlement graph on to
 ### 4. Tech Stack Recommendation
 
 Given your existing stack:
-- **Backend**: Bun + Hono (or Express) + PostgreSQL (via Drizzle ORM — schema-first, plays well with your TS patterns)
+- **Backend**: Bun + Express + PostgreSQL (via Drizzle ORM — schema-first, plays well with your TS patterns)
 - **Frontend**: React (can reuse patterns from AuthScale dashboard)
 - **Auth**: Simple session-based or JWT — doesn't need to be Authentik-level for this
 - **Deploy**: Railway or Render (free tier, Postgres included, deployable in under 30 min)
