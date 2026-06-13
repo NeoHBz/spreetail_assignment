@@ -1,0 +1,28 @@
+{
+  "name": "@spreetail/api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/server.ts",
+  "scripts": {
+    "dev": "bun --watch src/server.ts",
+    "build": "tsc",
+    "start": "bun src/server.ts"
+  },
+  "dependencies": {
+    "@spreetail/db": "workspace:*",
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "jsonwebtoken": "^9.0.2",
+    "bcrypt": "^5.1.1",
+    "multer": "^1.4.5-lts.1",
+    "csv-parse": "^5.5.6"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/bcrypt": "^5.0.2",
+    "@types/multer": "^1.4.11",
+    "typescript": "^5.4.5"
+  }
+}

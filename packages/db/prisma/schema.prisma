@@ -1,0 +1,154 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String            @id @default(uuid())
+  name         String
+  email        String            @unique
+  passwordHash String
+  createdAt    DateTime          @default(now())
+
+  memberships  GroupMembership[]
+  paidExpenses Expense[]         @relation("PaidByUser")
+  splits       ExpenseSplit[]
+  sentSettlements     Settlement[] @relation("SentSettlements")
+  receivedSettlements Settlement[] @relation("ReceivedSettlements")
+  addedGuests  Guest[]           @relation("AddedGuests")
+}
+
+model Guest {
+  id            String         @id @default(uuid())
+  name          String
+  addedByUserId String
+  createdAt     DateTime       @default(now())
+
+  addedByUser   User           @relation("AddedGuests", fields: [addedByUserId], references: [id])
+  splits        ExpenseSplit[]
+}
+
+model Group {
+  id        String            @id @default(uuid())
+  name      String
+  createdAt DateTime          @default(now())
+
+  memberships    GroupMembership[]
+  expenses       Expense[]
+  settlements    Settlement[]
+  importSessions ImportSession[]
+}
+
+model GroupMembership {
+  id       String    @id @default(uuid())
+  userId   String
+  groupId  String
+  joinedAt DateTime
+  leftAt   DateTime?
+
+  user  User  @relation(fields: [userId], references: [id])
+  group Group @relation(fields: [groupId], references: [id])
+
+  @@unique([userId, groupId])
+}
+
+model Expense {
+  id                     String         @id @default(uuid())
+  groupId                String
+  paidByUserId           String
+  description            String
+  amountOriginal         Decimal
+  amountOriginalCurrency String
+  convertedAmountInr     Decimal
+  date                   DateTime
+  splitType              String         // "equal", "unequal", "percentage", "share"
+  notes                  String?
+  source                 String         // "manual", "import"
+  createdAt              DateTime       @default(now())
+  deletedAt              DateTime?
+
+  group  Group          @relation(fields: [groupId], references: [id])
+  paidBy User           @relation("PaidByUser", fields: [paidByUserId], references: [id])
+  splits ExpenseSplit[]
+}
+
+model ExpenseSplit {
+  id         String   @id @default(uuid())
+  expenseId  String
+  userId     String?
+  guestId    String?
+  owedAmount Decimal
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id])
+  guest   Guest?  @relation(fields: [guestId], references: [id])
+
+  // Exactly one of userId or guestId should be non-null. Managed at application level or check constraint.
+}
+
+model Settlement {
+  id         String   @id @default(uuid())
+  groupId    String
+  fromUserId String
+  toUserId   String
+  amount     Decimal
+  currency   String
+  date       DateTime
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  group  Group @relation(fields: [groupId], references: [id])
+  fromUser User @relation("SentSettlements", fields: [fromUserId], references: [id])
+  toUser   User @relation("ReceivedSettlements", fields: [toUserId], references: [id])
+}
+
+model ExchangeRate {
+  id            String   @id @default(uuid())
+  fromCurrency  String
+  toCurrency    String
+  rate          Decimal
+  effectiveDate DateTime
+  source        String
+}
+
+model ImportSession {
+  id        String   @id @default(uuid())
+  groupId   String
+  filename  String
+  status    String   // "pending", "reviewed", "committed"
+  createdAt DateTime @default(now())
+
+  group     Group           @relation(fields: [groupId], references: [id])
+  rows      ImportRow[]
+  anomalies ImportAnomaly[]
+}
+
+model ImportAnomaly {
+  id              String   @id @default(uuid())
+  sessionId       String
+  rowNumber       Int
+  anomalyType     String
+  description     String
+  rawRow          Json
+  resolution      String   // "auto_fixed", "user_approved", "user_rejected", "pending"
+  resolutionNotes String?
+  editedValue     Json?
+
+  session ImportSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model ImportRow {
+  id                String   @id @default(uuid())
+  sessionId         String
+  rowNumber         Int
+  rawData           Json
+  status            String   // "staged", "committed", "rejected"
+  mappedExpenseId   String?
+  mappedSettlementId String?
+
+  session ImportSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}

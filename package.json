@@ -1,0 +1,14 @@
+{
+  "name": "spreetail-assignment",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "packages/db"
+  ],
+  "scripts": {
+    "dev": "bun --filter \"*\" dev",
+    "build": "bun --filter \"*\" build",
+    "start": "bun --filter \"*\" start"
+  }
+}
