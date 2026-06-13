@@ -10,9 +10,13 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
-    "@prisma/client": "^5.14.0"
+    "@prisma/client": "^5.14.0",
+    "@prisma/adapter-pg": "^5.14.0",
+    "@spreetail/shared": "workspace:*",
+    "pg": "^8.11.5"
   },
   "devDependencies": {
+    "@types/pg": "^8.11.6",
     "prisma": "^5.14.0",
     "typescript": "^5.4.5"
   }
