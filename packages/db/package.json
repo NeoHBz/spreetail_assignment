@@ -10,9 +10,11 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
-    "@prisma/client": "^5.14.0",
     "@prisma/adapter-pg": "^5.14.0",
+    "@prisma/client": "^5.14.0",
     "@spreetail/shared": "workspace:*",
+    "@types/bcrypt": "^6.0.0",
+    "bcrypt": "^6.0.0",
     "pg": "^8.11.5"
   },
   "devDependencies": {

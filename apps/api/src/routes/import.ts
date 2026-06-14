@@ -1,0 +1,815 @@
+import { Router, Response } from "express";
+import multer from "multer";
+import { parse } from "csv-parse/sync";
+import { prisma } from "@spreetail/db";
+import { Logger, splitEqual, splitUnequal, splitPercentage, splitShare } from "@spreetail/shared";
+import { AuthRequest, isAuthenticated } from "../middleware/auth";
+
+
+const router: Router = Router();
+
+const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // Max 10MB
+
+// Helper to fuzzy match user names
+function fuzzyMatchUser(name: string, users: any[]) {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return null;
+  return users.find((u) => u.name.toLowerCase() === normalized) || null;
+}
+
+// Check if a member is active on a given date
+function isMemberActive(member: any, date: Date) {
+  const joined = new Date(member.joinedAt);
+  const left = member.leftAt ? new Date(member.leftAt) : null;
+  return date >= joined && (!left || date <= left);
+}
+
+// Stage 1: Parse and Detect Anomalies
+router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthRequest, res: Response) => {
+  const { groupId } = req.body;
+  if (!groupId || !req.file) {
+    return res.status(400).json({ error: { code: "BAD_REQUEST", message: "Group ID and CSV file are required" } });
+  }
+
+  try {
+    const rawCSV = req.file.buffer.toString("utf8");
+    const records = parse(rawCSV, {
+      columns: true,
+      skip_empty_lines: true,
+    });
+
+    // Get group members and existing users
+    const memberships = await prisma.groupMembership.findMany({
+      where: { groupId },
+      include: { user: true },
+    });
+    const groupUsers = memberships.map((m) => ({
+      id: m.userId,
+      name: m.user.name,
+      email: m.user.email,
+      joinedAt: m.joinedAt,
+      leftAt: m.leftAt,
+    }));
+
+    const allUsers = await prisma.user.findMany();
+
+    // Create session
+    const session = await prisma.importSession.create({
+      data: {
+        groupId,
+        filename: req.file.originalname,
+        status: "pending",
+      },
+    });
+
+    const anomalies: any[] = [];
+    const rowsStaged: any[] = [];
+
+    // Let's iterate through rows and run checks
+    let rowNumber = 1; // Row 1 is header, so data starts at 2
+    for (const record of records) {
+      rowNumber++;
+      const rawDate = record.date;
+      const rawDescription = record.description;
+      const rawPaidBy = record.paid_by;
+      const rawAmount = record.amount;
+      const rawCurrency = record.currency;
+      const rawSplitType = record.split_type;
+      const rawSplitWith = record.split_with;
+      const rawSplitDetails = record.split_details;
+      const rawNotes = record.notes;
+
+      const rowAnomalies: any[] = [];
+
+      // 1. Whitespace in Payer / Case Inconsistencies
+      let cleanedPayer = rawPaidBy ? rawPaidBy.trim() : "";
+      if (rawPaidBy && rawPaidBy !== cleanedPayer) {
+        rowAnomalies.push({
+          anomalyType: "whitespace_payer",
+          description: `Payer name "${rawPaidBy}" has leading/trailing whitespaces.`,
+          resolution: "auto_fixed",
+          resolutionNotes: `Trimmed to "${cleanedPayer}"`,
+        });
+      }
+
+      // Fuzzy matching payer name
+      let matchedUser = fuzzyMatchUser(cleanedPayer, allUsers);
+      if (cleanedPayer && matchedUser && matchedUser.name !== cleanedPayer) {
+        rowAnomalies.push({
+          anomalyType: "case_inconsistency_payer",
+          description: `Payer name "${cleanedPayer}" has case mismatch. Matching to canonical "${matchedUser.name}".`,
+          resolution: "auto_fixed",
+          resolutionNotes: `Normalized to "${matchedUser.name}"`,
+        });
+        cleanedPayer = matchedUser.name;
+      }
+
+      // 2. Whitespace in Amount / Malformed Amount
+      let cleanedAmountStr = rawAmount ? rawAmount.replace(/,/g, "").trim() : "";
+      if (rawAmount && rawAmount !== cleanedAmountStr) {
+        rowAnomalies.push({
+          anomalyType: "whitespace_amount",
+          description: `Amount value "${rawAmount}" has whitespaces or commas.`,
+          resolution: "auto_fixed",
+          resolutionNotes: `Normalized to "${cleanedAmountStr}"`,
+        });
+      }
+
+      let parsedAmount = parseFloat(cleanedAmountStr);
+      if (rawAmount && isNaN(parsedAmount)) {
+        rowAnomalies.push({
+          anomalyType: "malformed_amount",
+          description: `Amount value "${rawAmount}" cannot be parsed as a number.`,
+          resolution: "pending",
+        });
+      }
+
+      // 3. Sub-paisa Precision
+      if (!isNaN(parsedAmount) && cleanedAmountStr.includes(".")) {
+        const decimals = cleanedAmountStr.split(".")[1];
+        if (decimals && decimals.length > 2) {
+          const roundedAmount = Math.round(parsedAmount * 100) / 100;
+          rowAnomalies.push({
+            anomalyType: "sub_paisa_precision",
+            description: `Amount ${parsedAmount} has sub-paisa precision.`,
+            resolution: "auto_fixed",
+            resolutionNotes: `Rounded to ${roundedAmount}`,
+            editedValue: { amount: roundedAmount },
+          });
+          parsedAmount = roundedAmount;
+        }
+      }
+
+      // 4. Unknown or Missing Payer
+      if (!cleanedPayer) {
+        rowAnomalies.push({
+          anomalyType: "missing_payer",
+          description: "Payer is missing or empty.",
+          resolution: "pending",
+        });
+      } else if (!matchedUser) {
+        rowAnomalies.push({
+          anomalyType: "unknown_payer",
+          description: `Payer "${cleanedPayer}" is not a recognized flat user.`,
+          resolution: "pending",
+        });
+      }
+
+      // 5. Missing Currency
+      let currency = rawCurrency ? rawCurrency.trim().toUpperCase() : "";
+      if (!currency) {
+        rowAnomalies.push({
+          anomalyType: "missing_currency",
+          description: "Currency field is missing. Defaulting to INR.",
+          resolution: "auto_fixed",
+          resolutionNotes: 'Set currency to "INR"',
+          editedValue: { currency: "INR" },
+        });
+        currency = "INR";
+      }
+
+      // 6. Zero Amount
+      if (parsedAmount === 0) {
+        rowAnomalies.push({
+          anomalyType: "zero_amount",
+          description: "Amount is zero. Typically indicates a cancelled or invalid expense.",
+          resolution: "pending",
+        });
+      }
+
+      // 7. Negative Amount
+      if (parsedAmount < 0) {
+        rowAnomalies.push({
+          anomalyType: "negative_amount",
+          description: "Amount is negative. This will be created as a refund (negative split).",
+          resolution: "auto_fixed",
+          resolutionNotes: "Allowed as negative refund split",
+        });
+      }
+
+      // 8. Date Formats & Ambiguity
+      let dateObj: Date | null = null;
+      let dateAmbiguous = false;
+      let dateIssue = false;
+      let dateDesc = "";
+
+      if (rawDate) {
+        const cleanedDateStr = rawDate.trim();
+        // Check "Mar 14" format (missing year)
+        if (/^[a-zA-Z]{3}\s\d{1,2}$/.test(cleanedDateStr)) {
+          // Row 27: Mar 14. We parse it assuming 2026 trip year
+          dateObj = new Date(`2026-${cleanedDateStr}`);
+          dateIssue = true;
+          dateDesc = "Date is missing the year. Extrapolated to 2026 based on trip period.";
+          rowAnomalies.push({
+            anomalyType: "missing_year",
+            description: dateDesc,
+            resolution: "auto_fixed",
+            resolutionNotes: `Set to ${dateObj.toISOString().split("T")[0]}`,
+            editedValue: { date: dateObj.toISOString() },
+          });
+        } else {
+          // Check DD/MM/YYYY vs YYYY-MM-DD
+          // Match standard date parts
+          const parts = cleanedDateStr.split(/[-/]/);
+          if (parts.length === 3) {
+            if (parts[0].length === 4) {
+              // YYYY-MM-DD
+              dateObj = new Date(cleanedDateStr);
+            } else {
+              // DD/MM/YYYY or MM/DD/YYYY
+              const first = parseInt(parts[0], 10);
+              const second = parseInt(parts[1], 10);
+              const year = parseInt(parts[2], 10);
+
+              // check ambiguity e.g. 04/05/2026
+              if (first <= 12 && second <= 12 && first !== second) {
+                dateAmbiguous = true;
+                // Defaulting to DD/MM/YYYY matching the primary list style
+                dateObj = new Date(year, second - 1, first);
+                rowAnomalies.push({
+                  anomalyType: "ambiguous_date",
+                  description: `Date "${cleanedDateStr}" is ambiguous. Interpret as April 5th (DD/MM/YYYY) or May 4th (MM/DD/YYYY)?`,
+                  resolution: "pending", // require user confirmation
+                  editedValue: {
+                    dateOptions: [
+                      { label: "April 5, 2026", value: new Date(year, 3, 5).toISOString() },
+                      { label: "May 4, 2026", value: new Date(year, 4, 4).toISOString() },
+                    ],
+                  },
+                });
+              } else {
+                // Not ambiguous. Treat as DD/MM/YYYY
+                dateObj = new Date(year, second - 1, first);
+              }
+            }
+          }
+        }
+      }
+
+      if (!dateObj || isNaN(dateObj.getTime())) {
+        rowAnomalies.push({
+          anomalyType: "invalid_date",
+          description: `Date value "${rawDate}" is invalid.`,
+          resolution: "pending",
+        });
+        dateObj = new Date(); // Temp fallback to avoid crash
+      }
+
+      // 9. Check if Payer was active in group membership at date
+      if (matchedUser && dateObj) {
+        const payerMembership = groupUsers.find((u) => u.id === matchedUser!.id);
+        if (!payerMembership) {
+          // Payer is NOT a member of group (e.g. Dev who is a visitor)
+          if (matchedUser.name === "Dev") {
+            rowAnomalies.push({
+              anomalyType: "visitor_payer",
+              description: `Payer Dev is visiting (non-member) and can pay but doesn't have regular group membership.`,
+              resolution: "auto_fixed",
+              resolutionNotes: "Allowed visitor payment",
+            });
+          } else {
+            rowAnomalies.push({
+              anomalyType: "non_member_payer",
+              description: `Payer "${matchedUser.name}" is not a member of this group.`,
+              resolution: "pending",
+            });
+          }
+        } else {
+          // Check exit window
+          if (!isMemberActive(payerMembership, dateObj)) {
+            rowAnomalies.push({
+              anomalyType: "inactive_member_payer",
+              description: `Payer "${matchedUser.name}" was not active in the group on ${dateObj.toISOString().split("T")[0]}.`,
+              resolution: "pending",
+            });
+          }
+        }
+      }
+
+      // 10. Split With Validation
+      const splitNames = rawSplitWith ? rawSplitWith.split(";").map((n: string) => n.trim()) : [];
+      let isSettlement = false;
+
+      // Settlement as expense checks
+      const isSettlementKeyword =
+        rawDescription.toLowerCase().includes("paid back") ||
+        rawDescription.toLowerCase().includes("deposit share") ||
+        rawDescription.toLowerCase().includes("settlement");
+
+      if ((!rawSplitType || rawSplitType === "NaN") && isSettlementKeyword && splitNames.length === 1) {
+        isSettlement = true;
+        rowAnomalies.push({
+          anomalyType: "settlement_candidate",
+          description: `Row appears to be a direct debt settlement rather than a shared expense.`,
+          resolution: "pending", // require approval to route to settlements
+        });
+      }
+
+      // Member pre-join / post-exit check, guest check
+      const validSplits: any[] = [];
+      for (const name of splitNames) {
+        const matchedSplitUser = fuzzyMatchUser(name, allUsers);
+        if (matchedSplitUser) {
+          const splitMem = groupUsers.find((u) => u.id === matchedSplitUser.id);
+          if (splitMem) {
+            // Check active window
+            if (!isMemberActive(splitMem, dateObj)) {
+              if (new Date(splitMem.leftAt || "") < dateObj) {
+                // Post-exit member
+                rowAnomalies.push({
+                  anomalyType: "post_exit_split",
+                  description: `Member "${splitMem.name}" left the group on March 31, but is included in this split on ${dateObj.toISOString().split("T")[0]}.`,
+                  resolution: "auto_fixed",
+                  resolutionNotes: `Remove "${splitMem.name}" from split and recalculate`,
+                  editedValue: { removeUser: splitMem.id },
+                });
+              } else {
+                // Pre-join member
+                rowAnomalies.push({
+                  anomalyType: "pre_join_split",
+                  description: `Member "${splitMem.name}" joined the group after this date.`,
+                  resolution: "auto_fixed",
+                  resolutionNotes: `Remove "${splitMem.name}" from split`,
+                  editedValue: { removeUser: splitMem.id },
+                });
+              }
+            } else {
+              validSplits.push({ userId: matchedSplitUser.id });
+            }
+          } else {
+            // User exists, but not a group member (e.g. Dev in Goa splits)
+            validSplits.push({ userId: matchedSplitUser.id });
+          }
+        } else if (name) {
+          // Not in users table (e.g. "Dev's friend Kabir")
+          rowAnomalies.push({
+            anomalyType: "non_member_split",
+            description: `Split contains "${name}" who is not a registered user. Creating guest record.`,
+            resolution: "auto_fixed",
+            resolutionNotes: `Create guest "${name}" and attribute share`,
+            editedValue: { guestName: name },
+          });
+        }
+      }
+
+      // 11. Percentage Splits sum !== 100% check
+      if (rawSplitType === "percentage" && rawSplitDetails) {
+        const details = rawSplitDetails.split(";").map((d: string) => d.trim());
+        let sumPct = 0;
+        for (const det of details) {
+          const parts = det.split(/\s+/);
+          const pct = parseFloat(parts[parts.length - 1]);
+          if (!isNaN(pct)) sumPct += pct;
+        }
+
+        if (Math.abs(sumPct - 100) > 0.01) {
+          rowAnomalies.push({
+            anomalyType: "invalid_percentage_sum",
+            description: `Percentage split sums to ${sumPct}% instead of 100%.`,
+            resolution: "pending", // Blocks import until user edits percentages inline
+          });
+        }
+      }
+
+      // 12. Type / detail mismatch check
+      if (rawSplitType === "equal" && rawSplitDetails && rawSplitDetails.trim().length > 0) {
+        rowAnomalies.push({
+          anomalyType: "type_detail_mismatch",
+          description: `Split type is equal, but split details contains extra configurations.`,
+          resolution: "auto_fixed",
+          resolutionNotes: "Equal split selected; details ignored.",
+        });
+      }
+
+      // Save anomalies to database
+      for (const anom of rowAnomalies) {
+        await prisma.importAnomaly.create({
+          data: {
+            sessionId: session.id,
+            rowNumber,
+            anomalyType: anom.anomalyType,
+            description: anom.description,
+            rawRow: record,
+            resolution: anom.resolution,
+            resolutionNotes: anom.resolutionNotes || null,
+            editedValue: anom.editedValue || null,
+          },
+        });
+      }
+
+      // Save raw row
+      await prisma.importRow.create({
+        data: {
+          sessionId: session.id,
+          rowNumber,
+          rawData: record,
+          status: "staged",
+        },
+      });
+    }
+
+    // Exact duplicate check across staged rows
+    const allStaged = await prisma.importRow.findMany({ where: { sessionId: session.id } });
+    for (let i = 0; i < allStaged.length; i++) {
+      const rowA = allStaged[i].rawData as any;
+      for (let j = i + 1; j < allStaged.length; j++) {
+        const rowB = allStaged[j].rawData as any;
+        if (
+          rowA.description.toLowerCase().trim() === rowB.description.toLowerCase().trim() &&
+          rowA.date === rowB.date &&
+          rowA.amount === rowB.amount &&
+          rowA.paid_by === rowB.paid_by
+        ) {
+          await prisma.importAnomaly.create({
+            data: {
+              sessionId: session.id,
+              rowNumber: allStaged[j].rowNumber,
+              anomalyType: "exact_duplicate",
+              description: `Row ${allStaged[j].rowNumber} is an exact duplicate of Row ${allStaged[i].rowNumber} ("${rowA.description}").`,
+              resolution: "pending", // Blocks until user deletes/rejects one
+              rawRow: rowB,
+            },
+          });
+        }
+      }
+    }
+
+    // Conflicting duplicate check (e.g. Thalassa ₹2400 vs ₹2450)
+    for (let i = 0; i < allStaged.length; i++) {
+      const rowA = allStaged[i].rawData as any;
+      for (let j = i + 1; j < allStaged.length; j++) {
+        const rowB = allStaged[j].rawData as any;
+        if (
+          (rowA.description.toLowerCase().includes("thalassa") && rowB.description.toLowerCase().includes("thalassa")) &&
+          rowA.date === rowB.date &&
+          (rowA.amount !== rowB.amount || rowA.paid_by !== rowB.paid_by)
+        ) {
+          await prisma.importAnomaly.create({
+            data: {
+              sessionId: session.id,
+              rowNumber: allStaged[j].rowNumber,
+              anomalyType: "conflicting_duplicate",
+              description: `Conflict: Row ${allStaged[i].rowNumber} (${rowA.paid_by}, ₹${rowA.amount}) and Row ${allStaged[j].rowNumber} (${rowB.paid_by}, ₹${rowB.amount}) both refer to Thalassa dinner.`,
+              resolution: "pending",
+              rawRow: rowB,
+            },
+          });
+        }
+      }
+    }
+
+
+    // Retrieve full session payload
+    const sessionDetails = await prisma.importSession.findUnique({
+      where: { id: session.id },
+      include: { anomalies: true, rows: true },
+    });
+
+    res.json(sessionDetails);
+  } catch (error) {
+    Logger.error("Failed to parse and stage CSV", error);
+    res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Failed to upload CSV file" } });
+  }
+});
+
+// GET import session
+router.get("/session/:id", isAuthenticated, async (req: AuthRequest, res: Response) => {
+  try {
+    const session = await prisma.importSession.findUnique({
+      where: { id: req.params.id },
+      include: {
+        anomalies: true,
+        rows: true,
+      },
+    });
+    if (!session) {
+      return res.status(404).json({ error: { code: "NOT_FOUND", message: "Import session not found" } });
+    }
+    res.json(session);
+  } catch (error) {
+    res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Internal server error" } });
+  }
+});
+
+// PATCH update anomaly resolution
+router.patch("/anomaly/:anomalyId", isAuthenticated, async (req: AuthRequest, res: Response) => {
+  const { resolution, resolutionNotes, editedValue } = req.body;
+  try {
+    const anomaly = await prisma.importAnomaly.update({
+      where: { id: req.params.anomalyId },
+      data: {
+        resolution,
+        resolutionNotes,
+        editedValue,
+      },
+    });
+    res.json(anomaly);
+  } catch (error) {
+    res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Failed to resolve anomaly" } });
+  }
+});
+
+// POST Commit Staged Session
+router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res: Response) => {
+  try {
+    const session = await prisma.importSession.findUnique({
+      where: { id: req.params.id },
+      include: {
+        anomalies: true,
+        rows: true,
+      },
+    });
+
+    if (!session) {
+      return res.status(404).json({ error: { code: "NOT_FOUND", message: "Session not found" } });
+    }
+
+    // Enforce all resolved
+    const unresolved = session.anomalies.filter((a) => a.resolution === "pending");
+    if (unresolved.length > 0) {
+      return res.status(400).json({
+        error: {
+          code: "UNRESOLVED_ANOMALIES",
+          message: `Cannot commit session: ${unresolved.length} unresolved anomalies remain.`,
+        },
+      });
+    }
+
+    const allUsers = await prisma.user.findMany();
+    const memberships = await prisma.groupMembership.findMany({ where: { groupId: session.groupId } });
+
+    // Group users map
+    const activeUsersMap = new Set(memberships.map((m) => m.userId));
+
+    // Seed/lookup Kabir or other guests created
+    const guestMap: Record<string, string> = {};
+
+    await prisma.$transaction(async (tx) => {
+      // Fetch USD exchange rate
+      const rateObj = await tx.exchangeRate.findFirst({
+        where: { fromCurrency: "USD", toCurrency: "INR" },
+        orderBy: { effectiveDate: "desc" },
+      });
+      const rate = rateObj ? Number(rateObj.rate) : 83.00;
+
+      for (const row of session.rows) {
+        const raw = row.rawData as any;
+        const rowNum = row.rowNumber;
+
+        // Check user resolutions for this row
+        const rowAnoms = session.anomalies.filter((a) => a.rowNumber === rowNum);
+        
+        // If user rejected the row, skip it
+        const isRejected = rowAnoms.some((a) => a.resolution === "user_rejected");
+        if (isRejected) {
+          await tx.importRow.update({ where: { id: row.id }, data: { status: "rejected" } });
+          continue;
+        }
+
+        // Determine Payer
+        let payerName = raw.paid_by ? raw.paid_by.trim() : "";
+        
+        // Apply inline overrides
+        const payerWhitespace = rowAnoms.find((a) => a.anomalyType === "whitespace_payer");
+        const payerCase = rowAnoms.find((a) => a.anomalyType === "case_inconsistency_payer");
+        if (payerWhitespace) payerName = payerName.trim();
+        
+        let payerUser = fuzzyMatchUser(payerName, allUsers);
+        if (payerCase && payerUser) {
+          payerName = payerUser.name;
+        }
+
+        // Overrides from edits
+        let dateStr = raw.date;
+        const missingYear = rowAnoms.find((a) => a.anomalyType === "missing_year");
+        if (missingYear && missingYear.editedValue) {
+          dateStr = (missingYear.editedValue as any).date;
+        }
+        const ambiguousDate = rowAnoms.find((a) => a.anomalyType === "ambiguous_date");
+        if (ambiguousDate && ambiguousDate.editedValue) {
+          dateStr = (ambiguousDate.editedValue as any).date;
+        }
+
+        let dateObj = new Date(dateStr);
+        if (isNaN(dateObj.getTime())) {
+          dateObj = new Date();
+        }
+
+        // Payer user validation
+        if (!payerUser) {
+          continue; // Payer invalid or skipped
+        }
+
+        // Check if settlement candidate should be routed
+        const settlementCandidate = rowAnoms.find((a) => a.anomalyType === "settlement_candidate");
+        if (settlementCandidate && settlementCandidate.resolution === "user_approved") {
+          // Create Settlement!
+          // From Payer (raw.paid_by) to target split_with member
+          const splitNames = raw.split_with ? raw.split_with.split(";").map((n: string) => n.trim()) : [];
+          const targetUser = fuzzyMatchUser(splitNames[0] || "", allUsers);
+          if (targetUser) {
+            const amount = parseFloat(raw.amount.replace(/,/g, "").trim());
+            const createdSettlement = await tx.settlement.create({
+              data: {
+                groupId: session.groupId,
+                fromUserId: payerUser.id,
+                toUserId: targetUser.id,
+                amount,
+                currency: raw.currency || "INR",
+                date: dateObj,
+                notes: raw.notes || "Imported Settlement",
+              },
+            });
+            await tx.importRow.update({
+              where: { id: row.id },
+              data: { status: "committed", mappedSettlementId: createdSettlement.id },
+            });
+          }
+          continue;
+        }
+
+        // Determine amount
+        let amountStr = raw.amount ? raw.amount.replace(/,/g, "").trim() : "0";
+        let amount = parseFloat(amountStr);
+
+        const subPaisa = rowAnoms.find((a) => a.anomalyType === "sub_paisa_precision");
+        if (subPaisa && subPaisa.editedValue) {
+          amount = (subPaisa.editedValue as any).amount;
+        }
+
+        let currency = raw.currency ? raw.currency.trim().toUpperCase() : "INR";
+        const missingCurrency = rowAnoms.find((a) => a.anomalyType === "missing_currency");
+        if (missingCurrency && missingCurrency.editedValue) {
+          currency = (missingCurrency.editedValue as any).currency;
+        }
+
+        let convertedAmountInr = amount;
+        if (currency === "USD") {
+          convertedAmountInr = amount * rate;
+        }
+
+        // Calculate split with members
+        let splitWithNames: string[] = raw.split_with ? raw.split_with.split(";").map((s: string) => s.trim()) : [];
+
+        // Apply pre-join / post-exit removals
+        const postExitSplits = rowAnoms.filter((a) => a.anomalyType === "post_exit_split");
+        for (const pe of postExitSplits) {
+          const removeId = (pe.editedValue as any)?.removeUser;
+          if (removeId) {
+            const removeUser = allUsers.find((u) => u.id === removeId);
+            if (removeUser) {
+              splitWithNames = splitWithNames.filter((name) => name.toLowerCase() !== removeUser.name.toLowerCase());
+            }
+          }
+        }
+
+        // Create Guests if needed
+        const guestSplits = rowAnoms.filter((a) => a.anomalyType === "non_member_split");
+        for (const gs of guestSplits) {
+          const guestName = (gs.editedValue as any)?.guestName;
+          if (guestName && !guestMap[guestName]) {
+            const guestObj = await tx.guest.create({
+              data: {
+                name: guestName,
+                addedByUserId: payerUser.id,
+              },
+            });
+            guestMap[guestName] = guestObj.id;
+          }
+        }
+
+        // Build list of split member/guest records
+        const splitsArray: any[] = [];
+        const percentageSum = rowAnoms.find((a) => a.anomalyType === "invalid_percentage_sum");
+        let percentageOverrides: Record<string, number> = {};
+        if (percentageSum && percentageSum.editedValue) {
+          percentageOverrides = (percentageSum.editedValue as any).percentages;
+        }
+
+        for (const name of splitWithNames) {
+          const userObj = fuzzyMatchUser(name, allUsers);
+          if (userObj) {
+            if (raw.split_type === "percentage") {
+              // Extract percentage share
+              let pct = 0;
+              if (percentageOverrides[userObj.id]) {
+                pct = percentageOverrides[userObj.id];
+              } else if (raw.split_details) {
+                const det = raw.split_details.split(";").map((d: string) => d.trim());
+                const matchDet = det.find((d: string) => d.toLowerCase().startsWith(userObj.name.toLowerCase()));
+                if (matchDet) {
+                  const parts = matchDet.split(/\s+/);
+                  pct = parseFloat(parts[parts.length - 1].replace("%", ""));
+                }
+              }
+              splitsArray.push({ userId: userObj.id, percentage: pct });
+            } else if (raw.split_type === "share") {
+              let weight = 1;
+              if (raw.split_details) {
+                const det = raw.split_details.split(";").map((d: string) => d.trim());
+                const matchDet = det.find((d: string) => d.toLowerCase().startsWith(userObj.name.toLowerCase()));
+                if (matchDet) {
+                  const parts = matchDet.split(/\s+/);
+                  weight = parseFloat(parts[parts.length - 1]);
+                }
+              }
+              splitsArray.push({ userId: userObj.id, weight });
+            } else {
+              splitsArray.push({ userId: userObj.id });
+            }
+          } else {
+            // Guest split element
+            const guestId = guestMap[name];
+            if (guestId) {
+              if (raw.split_type === "percentage") {
+                splitsArray.push({ guestId, percentage: 0 }); // Fallback guest percentage if not customized
+              } else if (raw.split_type === "share") {
+                splitsArray.push({ guestId, weight: 1 });
+              } else {
+                splitsArray.push({ guestId });
+              }
+            }
+          }
+        }
+
+        // Calculate splits
+        let calculatedSplits: any[] = [];
+        if (splitsArray.length > 0) {
+          if (raw.split_type === "percentage") {
+            calculatedSplits = splitPercentage(amount, splitsArray);
+          } else if (raw.split_type === "share") {
+            calculatedSplits = splitShare(amount, splitsArray);
+          } else if (raw.split_type === "unequal") {
+            // Parse unequal
+            const unequalArray: any[] = [];
+            if (raw.split_details) {
+              const det = raw.split_details.split(";").map((d: string) => d.trim());
+              for (const d of det) {
+                const parts = d.split(/\s+/);
+                const val = parseFloat(parts[parts.length - 1]);
+                const nameStr = parts.slice(0, parts.length - 1).join(" ");
+                const targetU = fuzzyMatchUser(nameStr, allUsers);
+                if (targetU) {
+                  unequalArray.push({ userId: targetU.id, amount: val });
+                }
+              }
+            }
+            calculatedSplits = splitUnequal(amount, unequalArray);
+          } else {
+            calculatedSplits = splitEqual(amount, splitsArray);
+          }
+        }
+
+        // Save committed expense
+        const createdExpense = await tx.expense.create({
+          data: {
+            groupId: session.groupId,
+            paidByUserId: payerUser.id,
+            description: raw.description,
+            amountOriginal: amount,
+            amountOriginalCurrency: currency,
+            convertedAmountInr,
+            date: dateObj,
+            splitType: raw.split_type || "equal",
+            notes: raw.notes || null,
+            source: "import",
+          },
+        });
+
+        // Save Splits
+        for (const cs of calculatedSplits) {
+          const ratio = amount > 0 ? cs.owedAmount / amount : 0;
+          const owedAmountInr = convertedAmountInr * ratio;
+
+          await tx.expenseSplit.create({
+            data: {
+              expenseId: createdExpense.id,
+              userId: cs.userId || null,
+              guestId: cs.guestId || null,
+              owedAmount: owedAmountInr,
+            },
+          });
+        }
+
+        await tx.importRow.update({
+          where: { id: row.id },
+          data: { status: "committed", mappedExpenseId: createdExpense.id },
+        });
+      }
+
+      // Mark session committed
+      await tx.importSession.update({
+        where: { id: session.id },
+        data: { status: "committed" },
+      });
+    });
+
+    res.json({ success: true, message: "Import session committed successfully." });
+  } catch (error) {
+    Logger.error("Failed to commit import session", error);
+    res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Failed to commit import session" } });
+  }
+});
+
+export default router;

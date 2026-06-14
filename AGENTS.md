@@ -87,6 +87,7 @@ Examples:
 - `fix: normalize trailing whitespace in CSV payer names`
 - `chore: add migration for exchange_rates table`
 
+Update plan.md after each prompt finish.
 ---
 
 **These guidelines are working if:** diffs are minimal, questions come before mistakes, and every line in the repo can be explained.
