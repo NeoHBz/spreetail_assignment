@@ -1,3 +1,4 @@
+import { API_URL } from "@/lib/api";
 import React, { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import ImportPanel from "../components/ImportPanel";
@@ -143,16 +144,16 @@ export default function GroupDetails() {
       const headers = { Authorization: `Bearer ${localStorage.getItem("token")}` };
 
       // Fetch group details
-      const groupRes = await fetch(`http://localhost:3001/groups/${id}`, { headers });
+      const groupRes = await fetch(`${API_URL}/groups/${id}`, { headers });
       const groupData = await groupRes.json();
       setGroup(groupData);
 
       // Fetch expenses
-      const expRes = await fetch(`http://localhost:3001/expenses/group/${id}`, { headers });
+      const expRes = await fetch(`${API_URL}/expenses/group/${id}`, { headers });
       setExpenses(await expRes.json());
 
       // Fetch settlements
-      const setRes = await fetch(`http://localhost:3001/settlements/group/${id}`, { headers });
+      const setRes = await fetch(`${API_URL}/settlements/group/${id}`, { headers });
       const setData = await setRes.json();
       // Keep state if needed or log
       if (setData) {
@@ -162,8 +163,8 @@ export default function GroupDetails() {
 
       // Fetch balances
       const balUrl = asOfDate
-        ? `http://localhost:3001/balances/group/${id}?asOfDate=${asOfDate}`
-        : `http://localhost:3001/balances/group/${id}`;
+        ? `${API_URL}/balances/group/${id}?asOfDate=${asOfDate}`
+        : `${API_URL}/balances/group/${id}`;
       const balRes = await fetch(balUrl, { headers });
       const balData = await balRes.json();
       setBalances(balData.balances || []);
@@ -188,7 +189,7 @@ export default function GroupDetails() {
         return;
       }
     }
-    fetch("http://localhost:3001/fx-rates", {
+    fetch(`${API_URL}/fx-rates`, {
       headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
     })
       .then((r) => r.json())
@@ -205,7 +206,7 @@ export default function GroupDetails() {
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch(`http://localhost:3001/groups/${id}/members`, {
+      const res = await fetch(`${API_URL}/groups/${id}/members`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -280,7 +281,7 @@ export default function GroupDetails() {
     }
 
     try {
-      const res = await fetch("http://localhost:3001/expenses", {
+      const res = await fetch(`${API_URL}/expenses`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -317,7 +318,7 @@ export default function GroupDetails() {
   const handleCreateSettlement = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch("http://localhost:3001/settlements", {
+      const res = await fetch(`${API_URL}/settlements`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -349,8 +350,8 @@ export default function GroupDetails() {
     setSelectedDrilldownUser(userId);
     try {
       const balUrl = asOfDate
-        ? `http://localhost:3001/balances/group/${id}/user/${userId}?asOfDate=${asOfDate}`
-        : `http://localhost:3001/balances/group/${id}/user/${userId}`;
+        ? `${API_URL}/balances/group/${id}/user/${userId}?asOfDate=${asOfDate}`
+        : `${API_URL}/balances/group/${id}/user/${userId}`;
       const res = await fetch(balUrl, {
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       });
@@ -364,7 +365,7 @@ export default function GroupDetails() {
   const handleDeleteExpense = async (expenseId: string, description: string) => {
     if (!window.confirm(`Delete "${description}"? This cannot be undone.`)) return;
     try {
-      const res = await fetch(`http://localhost:3001/expenses/${expenseId}`, {
+      const res = await fetch(`${API_URL}/expenses/${expenseId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       });
@@ -377,7 +378,7 @@ export default function GroupDetails() {
 
   const handleEditExpense = async (expenseId: string) => {
     try {
-      const res = await fetch(`http://localhost:3001/expenses/${expenseId}`, {
+      const res = await fetch(`${API_URL}/expenses/${expenseId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -405,7 +406,7 @@ export default function GroupDetails() {
     if (!leftDate) return;
 
     try {
-      const res = await fetch(`http://localhost:3001/groups/${id}/members/${memberId}`, {
+      const res = await fetch(`${API_URL}/groups/${id}/members/${memberId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

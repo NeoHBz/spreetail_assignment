@@ -1,3 +1,4 @@
+import { API_URL } from "@/lib/api";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,7 @@ export default function Dashboard() {
 
   const fetchGroups = async () => {
     try {
-      const res = await fetch("http://localhost:3001/groups", {
+      const res = await fetch(`${API_URL}/groups`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
@@ -42,7 +43,7 @@ export default function Dashboard() {
     if (!newGroupName.trim()) return;
 
     try {
-      const res = await fetch("http://localhost:3001/groups", {
+      const res = await fetch(`${API_URL}/groups`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

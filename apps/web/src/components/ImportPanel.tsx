@@ -1,3 +1,4 @@
+import { API_URL } from "@/lib/api";
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -350,7 +351,7 @@ export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense
   const [currencyEdits, setCurrencyEdits] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    fetch(`http://localhost:3001/groups/${groupId}`, {
+    fetch(`${API_URL}/groups/${groupId}`, {
       headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -375,7 +376,7 @@ export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense
     formData.append("file", file);
     formData.append("groupId", groupId);
     try {
-      const res = await fetch("http://localhost:3001/import/upload", {
+      const res = await fetch(`${API_URL}/import/upload`, {
         method: "POST",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         body: formData,
@@ -392,7 +393,7 @@ export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense
   };
 
   const patchAnomaly = async (anomalyId: string, resolution: string, editedValue?: any) => {
-    const res = await fetch(`http://localhost:3001/import/anomaly/${anomalyId}`, {
+    const res = await fetch(`${API_URL}/import/anomaly/${anomalyId}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -611,7 +612,7 @@ export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`http://localhost:3001/import/session/${session.id}/commit`, {
+      const res = await fetch(`${API_URL}/import/session/${session.id}/commit`, {
         method: "POST",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       });
