@@ -8,3 +8,4 @@ build/
 *.log
 packages/db/prisma/migrations/
 stitch_flatbalance_expense_tracker/
+*.tsbuildinfo
