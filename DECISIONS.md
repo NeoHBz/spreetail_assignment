@@ -23,3 +23,23 @@ This log lists the significant architectural decisions, alternative options cons
 - **Option A**: Create full User accounts for all participants.
 - **Option B**: Add a lightweight `Guest` table for visitors/one-offs.
 - **Decision**: Option B. Visitors like Kabir do not log in or need credentials, but splits must attribute their shares. True walk-ins who pay (like Dev) are given full `User` records because only users can be the `paid_by` payer in the DB schema.
+
+## 5. Non-Member Payer Balance Inclusion (Dev)
+- **Option A**: Exclude non-group-member payers from balance calculations entirely.
+- **Option B**: Dynamically add any expense payer who is not a group member to the balance map with an initial balance of 0.
+- **Decision**: Option B. Dev is a real user who fronted money for group expenses. Excluding his credits from balance calculations would produce incorrect net balances — the group would appear to collectively owe less than they actually do. Non-member payers are inserted into the balance map on-the-fly from the expense records. They appear in the output so users can see they are owed money.
+
+## 6. Conflicting Duplicate Detection Scope
+- **Option A**: Detect conflicting duplicates only for rows with a specific keyword (e.g. "thalassa").
+- **Option B**: Use the general definition — same description (case-insensitive, trimmed) + same date + different amount or different payer — for all rows.
+- **Decision**: Option B. The hardcoded keyword approach was a development artifact. The general rule correctly catches all conflicting duplicate patterns, including the Thalassa dinner case and any future conflicts without requiring code changes per case.
+
+## 7. Percentage Invalid Sum — Auto-Equalize Resolution
+- **Option A**: Require users to manually enter corrected percentages per person in an inline edit form.
+- **Option B**: Provide an "auto-equalize" button that distributes 100% equally across all split members, with fractional remainder assigned to the first member.
+- **Decision**: Option B for the initial version. A full inline editor would be more precise but adds significant UI complexity. The auto-equalize button covers the primary use case (typo in one percentage value). The equalization logic runs server-side at commit time when the frontend signals `percentages: {}` (empty overrides), keeping the UI simple and the calculation authoritative on the backend.
+
+## 8. Orphan Import Session Cleanup
+- **Option A**: Run a scheduled cron job to delete pending sessions older than 24 hours.
+- **Option B**: Lazy delete on the next upload — check for stale sessions and remove them when a new upload is initiated.
+- **Decision**: Option B for now. A cron requires a separate scheduled process. Lazy deletion on upload is simpler and has the same effective outcome since stale sessions block no resources. The policy is: sessions in `pending` status older than 24 hours are considered abandoned dead data. This will be implemented as a pre-upload cleanup step.

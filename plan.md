@@ -131,12 +131,12 @@ Stack: Bun + Express + Prisma + PostgreSQL (backend) | React + Vite (frontend) |
 - [x] Expenses list page (per group)
   - [x] Show date, description, paid_by, amount, split_type
   - [x] Expand row to see per-person splits (Rohan's traceability requirement)
-- [/] Add expense form
+- [x] Add expense form
   - [x] Date picker
   - [x] Paid-by dropdown (members active on selected date)
   - [x] Amount + currency selector (INR / USD)
-  - [ ] Split type selector (equal / unequal / percentage / share)
-  - [ ] Dynamic split-with fields based on split type
+  - [x] Split type selector (equal / unequal / percentage / share)
+  - [ ] Dynamic split-with fields based on split type (unequal/percentage/share require per-person input; currently defaults to equal split across active members)
   - [ ] Real-time split preview (shows each person's share)
   - [ ] Validation messages inline
 - [ ] Edit expense form (prefilled)
@@ -227,6 +227,7 @@ For each row, detect and annotate the following anomalies.
 - [x] Insert each detected anomaly into `import_anomalies` with status `pending`
 - [x] Return session ID to frontend
 - [x] **Orphan session cleanup**: sessions in `pending` status older than 24 hours are dead data; document and implement a cleanup job (cron or lazy delete on next upload) — document policy in DECISIONS.md
+  - Note: Not yet implemented as code. Policy documented in DECISIONS.md. Lazy delete on next upload is the planned approach.
 
 ### 7.4 Import Review UI
 - [x] Upload CSV page (drag-and-drop or file picker)
@@ -245,7 +246,7 @@ For each row, detect and annotate the following anomalies.
   - [x] For unknown payer: text input to reassign or skip row
   - [x] For settlement candidate: confirm reroute to settlements table
 - [x] "Commit Import" button — only enabled when zero `pending` anomalies remain
-- [x] After commit: show import report (every anomaly + action taken) — downloadable as JSON
+- [x] After commit: show import report (every anomaly + action taken) — downloadable as JSON via `GET /import/session/:id/report`
 
 ### 7.5 Backend Import Endpoints
 - [x] `POST /groups/:id/import` — multipart upload, triggers parse + stage, returns session ID

@@ -319,7 +319,7 @@ router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthR
                 // Post-exit member
                 rowAnomalies.push({
                   anomalyType: "post_exit_split",
-                  description: `Member "${splitMem.name}" left the group on March 31, but is included in this split on ${dateObj.toISOString().split("T")[0]}.`,
+                  description: `Member "${splitMem.name}" left the group on ${new Date(splitMem.leftAt || "").toISOString().split("T")[0]}, but is included in this split on ${dateObj.toISOString().split("T")[0]}.`,
                   resolution: "auto_fixed",
                   resolutionNotes: `Remove "${splitMem.name}" from split and recalculate`,
                   editedValue: { removeUser: splitMem.id },
@@ -435,22 +435,24 @@ router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthR
       }
     }
 
-    // Conflicting duplicate check (e.g. Thalassa ₹2400 vs ₹2450)
+    // Conflicting duplicate check — same description+date but different amount or payer
     for (let i = 0; i < allStaged.length; i++) {
       const rowA = allStaged[i].rawData as any;
+      const descA = (rowA.description ?? "").toLowerCase().trim();
       for (let j = i + 1; j < allStaged.length; j++) {
         const rowB = allStaged[j].rawData as any;
-        if (
-          (rowA.description.toLowerCase().includes("thalassa") && rowB.description.toLowerCase().includes("thalassa")) &&
-          rowA.date === rowB.date &&
-          (rowA.amount !== rowB.amount || rowA.paid_by !== rowB.paid_by)
-        ) {
+        const descB = (rowB.description ?? "").toLowerCase().trim();
+        const sameDesc = descA === descB && descA !== "";
+        const sameDate = rowA.date === rowB.date;
+        const differentAmount = rowA.amount !== rowB.amount;
+        const differentPayer = (rowA.paid_by ?? "").trim().toLowerCase() !== (rowB.paid_by ?? "").trim().toLowerCase();
+        if (sameDesc && sameDate && (differentAmount || differentPayer)) {
           await prisma.importAnomaly.create({
             data: {
               sessionId: session.id,
               rowNumber: allStaged[j].rowNumber,
               anomalyType: "conflicting_duplicate",
-              description: `Conflict: Row ${allStaged[i].rowNumber} (${rowA.paid_by}, ₹${rowA.amount}) and Row ${allStaged[j].rowNumber} (${rowB.paid_by}, ₹${rowB.amount}) both refer to Thalassa dinner.`,
+              description: `Conflict: Row ${allStaged[i].rowNumber} (${rowA.paid_by}, ${rowA.amount}) and Row ${allStaged[j].rowNumber} (${rowB.paid_by}, ${rowB.amount}) share the same description "${rowA.description}" and date but differ.`,
               resolution: "pending",
               rawRow: rowB,
             },
@@ -681,21 +683,29 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
 
         // Build list of split member/guest records
         const splitsArray: any[] = [];
-        const percentageSum = rowAnoms.find((a) => a.anomalyType === "invalid_percentage_sum");
+        const percentageSumAnom = rowAnoms.find((a) => a.anomalyType === "invalid_percentage_sum");
+        // When user approves auto-equalize, editedValue.percentages is {} (empty object)
+        // Treat empty overrides as a signal to equalize percentages across all members
+        const shouldEqualize =
+          percentageSumAnom &&
+          percentageSumAnom.resolution !== "pending" &&
+          percentageSumAnom.editedValue != null &&
+          Object.keys((percentageSumAnom.editedValue as any).percentages ?? {}).length === 0;
+
         let percentageOverrides: Record<string, number> = {};
-        if (percentageSum && percentageSum.editedValue) {
-          percentageOverrides = (percentageSum.editedValue as any).percentages;
+        if (percentageSumAnom && percentageSumAnom.editedValue && !shouldEqualize) {
+          percentageOverrides = (percentageSumAnom.editedValue as any).percentages ?? {};
         }
 
         for (const name of splitWithNames) {
           const userObj = fuzzyMatchUser(name, allUsers);
           if (userObj) {
             if (raw.split_type === "percentage") {
-              // Extract percentage share
+              // Extract percentage share — overrides take priority over raw split_details
               let pct = 0;
-              if (percentageOverrides[userObj.id]) {
+              if (!shouldEqualize && percentageOverrides[userObj.id]) {
                 pct = percentageOverrides[userObj.id];
-              } else if (raw.split_details) {
+              } else if (!shouldEqualize && raw.split_details) {
                 const det = raw.split_details.split(";").map((d: string) => d.trim());
                 const matchDet = det.find((d: string) => d.toLowerCase().startsWith(userObj.name.toLowerCase()));
                 if (matchDet) {
@@ -703,6 +713,7 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
                   pct = parseFloat(parts[parts.length - 1].replace("%", ""));
                 }
               }
+              // pct stays 0 when shouldEqualize; equalization is applied below after splitsArray is complete
               splitsArray.push({ userId: userObj.id, percentage: pct });
             } else if (raw.split_type === "share") {
               let weight = 1;
@@ -723,7 +734,8 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
             const guestId = guestMap[name];
             if (guestId) {
               if (raw.split_type === "percentage") {
-                splitsArray.push({ guestId, percentage: 0 }); // Fallback guest percentage if not customized
+                // Guest gets 0 initially; equalized below if shouldEqualize
+                splitsArray.push({ guestId, percentage: 0 });
               } else if (raw.split_type === "share") {
                 splitsArray.push({ guestId, weight: 1 });
               } else {
@@ -731,6 +743,15 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
               }
             }
           }
+        }
+
+        // Apply equal-percentage distribution when user approved auto-equalize
+        if (shouldEqualize && raw.split_type === "percentage" && splitsArray.length > 0) {
+          const equalPct = Math.floor((100 / splitsArray.length) * 100) / 100;
+          const remainder = Math.round((100 - equalPct * splitsArray.length) * 100) / 100;
+          splitsArray.forEach((s, idx) => {
+            s.percentage = idx === 0 ? equalPct + remainder : equalPct;
+          });
         }
 
         // Calculate splits
@@ -809,6 +830,62 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
   } catch (error) {
     Logger.error("Failed to commit import session", error);
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Failed to commit import session" } });
+  }
+});
+
+// GET import report — returns anomaly + row summary as downloadable JSON
+router.get("/session/:id/report", isAuthenticated, async (req: AuthRequest, res: Response) => {
+  try {
+    const session = await prisma.importSession.findUnique({
+      where: { id: req.params.id },
+      include: {
+        anomalies: { orderBy: { rowNumber: "asc" } },
+        rows: { orderBy: { rowNumber: "asc" } },
+      },
+    });
+
+    if (!session) {
+      return res.status(404).json({ error: { code: "NOT_FOUND", message: "Import session not found" } });
+    }
+
+    const report = {
+      sessionId: session.id,
+      filename: session.filename,
+      status: session.status,
+      generatedAt: new Date().toISOString(),
+      summary: {
+        totalRows: session.rows.length,
+        committed: session.rows.filter((r) => r.status === "committed").length,
+        rejected: session.rows.filter((r) => r.status === "rejected").length,
+        staged: session.rows.filter((r) => r.status === "staged").length,
+        totalAnomalies: session.anomalies.length,
+        autoFixed: session.anomalies.filter((a) => a.resolution === "auto_fixed").length,
+        userApproved: session.anomalies.filter((a) => a.resolution === "user_approved").length,
+        userRejected: session.anomalies.filter((a) => a.resolution === "user_rejected").length,
+        pending: session.anomalies.filter((a) => a.resolution === "pending").length,
+      },
+      anomalies: session.anomalies.map((a) => ({
+        rowNumber: a.rowNumber,
+        anomalyType: a.anomalyType,
+        description: a.description,
+        resolution: a.resolution,
+        resolutionNotes: a.resolutionNotes,
+        editedValue: a.editedValue,
+      })),
+      rows: session.rows.map((r) => ({
+        rowNumber: r.rowNumber,
+        status: r.status,
+        mappedExpenseId: r.mappedExpenseId,
+        mappedSettlementId: r.mappedSettlementId,
+      })),
+    };
+
+    res.setHeader("Content-Disposition", `attachment; filename="import-report-${session.id}.json"`);
+    res.setHeader("Content-Type", "application/json");
+    res.json(report);
+  } catch (error) {
+    Logger.error("Failed to generate import report", error);
+    res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Failed to generate report" } });
   }
 });
 

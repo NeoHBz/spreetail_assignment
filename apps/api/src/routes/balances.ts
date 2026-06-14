@@ -72,8 +72,16 @@ router.get("/group/:groupId", isAuthenticated, async (req: AuthRequest, res: Res
       },
       include: {
         splits: true,
+        paidBy: { select: { id: true, name: true } },
       },
     });
+
+    // Ensure non-member payers (e.g. Dev) appear in the map so their credits aren't dropped
+    for (const e of expenses) {
+      if (!membersMap[e.paidByUserId]) {
+        membersMap[e.paidByUserId] = { name: e.paidBy.name, amount: 0 };
+      }
+    }
 
     // Add paid amounts and subtract split shares
     for (const e of expenses) {

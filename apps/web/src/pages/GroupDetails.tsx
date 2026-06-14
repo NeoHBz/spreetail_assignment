@@ -56,7 +56,7 @@ export default function GroupDetails() {
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("INR");
-  const splitType = "equal";
+  const [splitType, setSplitType] = useState("equal");
   const [paidBy, setPaidBy] = useState("");
   const [expenseDate, setExpenseDate] = useState("");
 
@@ -130,9 +130,17 @@ export default function GroupDetails() {
 
   const handleCreateExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Auto populate splits equally
-    const splits = group.members.map((m: any) => ({ userId: m.id }));
+
+    // Only include members who were active on the selected expense date
+    const selectedDate = expenseDate ? new Date(expenseDate) : null;
+    const activeSplits = group.members
+      .filter((m: Member) => {
+        if (!selectedDate) return !m.leftAt; // if no date chosen, include current members only
+        const joined = new Date(m.joinedAt);
+        const left = m.leftAt ? new Date(m.leftAt) : null;
+        return selectedDate >= joined && (!left || selectedDate <= left);
+      })
+      .map((m: Member) => ({ userId: m.id }));
 
     try {
       const res = await fetch("http://localhost:3001/expenses", {
@@ -149,7 +157,7 @@ export default function GroupDetails() {
           amountOriginalCurrency: currency,
           date: expenseDate,
           splitType,
-          splits,
+          splits: activeSplits,
         }),
       });
       if (!res.ok) {
@@ -605,6 +613,21 @@ export default function GroupDetails() {
                 {group.members.map((m: any) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
+              </select>
+              <select
+                value={splitType}
+                onChange={(e) => setSplitType(e.target.value)}
+                style={{
+                  background: "rgba(0,0,0,0.2)",
+                  border: "1px solid var(--panel-border)",
+                  color: "white",
+                  padding: "0.5rem"
+                }}
+              >
+                <option value="equal">Equal</option>
+                <option value="unequal">Unequal</option>
+                <option value="percentage">Percentage</option>
+                <option value="share">Share (weighted)</option>
               </select>
               <input
                 type="date"

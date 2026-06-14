@@ -81,6 +81,7 @@ When your changes create orphans:
 
 - Update plan.md after each prompt finish.
 - Update DECISIONS.md and document each decision point, options, and the path taken.
+- Update AI_USAGE.md
 - Update other documents as needed.
 
 ---
