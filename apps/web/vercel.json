@@ -1,8 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "bun install",
-  "buildCommand": "bun run --filter @spreetail/web build",
-  "outputDirectory": "apps/web/dist",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
