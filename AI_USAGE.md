@@ -5,12 +5,14 @@ This document lists the AI tools used, key prompts, and cases where the agent pr
 ## AI Tools Used
 - Gemini 3.5 Flash (Low) via Antigravity Agentic system.
 - Claude Sonnet 4.6 via Claude Code
+- Claude Opus 4.8 (1M context) via Claude Code
 
 ## Key Prompts & Tasks
 - Initial repository analysis and anomaly cataloging.
 - Schema setup for Postgres and Prisma adapter configurations.
 - Pure functions for equal, percentage, unequal, and weight-based splitting.
 - Importer parser validation for exit dates and overlapping duplicates.
+- **Cross-import & recurring duplicate detection** (Opus 4.8): prompted with "file1.csv contains `entry 1`, already imported; then file2.csv also contains `entry 1` — should we detect this, and should rent/bills be smartly flagged?" The agent first surfaced that the existing dedup was intra-file only, proposed a three-tier plan (exact cross-import / recurring-period-aware / near-duplicate), then implemented it in `import.ts` + `ImportPanel.tsx`. See DECISIONS.md §9.
 
 ## Code Corrections & Fixes
 

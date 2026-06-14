@@ -76,6 +76,9 @@ router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthR
 
     const anomalies: any[] = [];
     const rowsStaged: any[] = [];
+    // Resolved per-row values (payer/amount/date), retained so the cross-import
+    // duplicate pass below can match staged rows against already-committed expenses.
+    const parsedRows: any[] = [];
 
     // Let's iterate through rows and run checks
     let rowNumber = 1; // Row 1 is header, so data starts at 2
@@ -294,8 +297,9 @@ router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthR
             rowAnomalies.push({
               anomalyType: "non_member_payer",
               description: `Payer "${matchedUser.name}" is not a member of this group.`,
-              resolution: "pending",
-              editedValue: { candidateUserId: matchedUser.id, candidateName: matchedUser.name },
+              resolution: "auto_fixed",
+              resolutionNotes: `Add "${matchedUser.name}" to the group as a member`,
+              editedValue: { candidateUserId: matchedUser.id, candidateName: matchedUser.name, addAsMember: true },
             });
           }
         } else {
@@ -405,6 +409,18 @@ router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthR
         });
       }
 
+      // Retain resolved values for the cross-import duplicate pass (runs after the loop).
+      parsedRows.push({
+        rowNumber,
+        raw: record,
+        description: rawDescription ?? "",
+        payerUserId: matchedUser?.id ?? null,
+        payerName: cleanedPayer,
+        amount: parsedAmount,
+        currency,
+        dateObj,
+      });
+
       // Save anomalies to database
       for (const anom of rowAnomalies) {
         await prisma.importAnomaly.create({
@@ -478,6 +494,145 @@ router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthR
               description: `Conflict: Row ${allStaged[i].rowNumber} (${rowA.paid_by}, ${rowA.amount}) and Row ${allStaged[j].rowNumber} (${rowB.paid_by}, ${rowB.amount}) share the same description "${rowA.description}" and date but differ.`,
               resolution: "pending",
               rawRow: rowB,
+            },
+          });
+        }
+      }
+    }
+
+    // ── Cross-import duplicate detection ──────────────────────────────────────────
+    // Compares each staged row against expenses ALREADY committed to this group
+    // (prior imports or manual entry) — the intra-session checks above only compare
+    // staged rows against each other, so re-importing an overlapping file would
+    // otherwise silently double-count. Recurring expenses (rent, monthly bills) are
+    // detected as a per-payer series: a *new month's* instance is allowed through,
+    // while a repeat of an already-covered month is flagged.
+    const committedExpenses = await prisma.expense.findMany({
+      where: { groupId, deletedAt: null },
+      select: {
+        id: true,
+        description: true,
+        date: true,
+        amountOriginal: true,
+        amountOriginalCurrency: true,
+        paidByUserId: true,
+      },
+    });
+
+    if (committedExpenses.length > 0) {
+      const userNameById = new Map(allUsers.map((u) => [u.id, u.name]));
+      const normDesc = (s: string) => (s ?? "").toLowerCase().trim().replace(/\s+/g, " ");
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const dateKey = (d: Date) => d.toISOString().slice(0, 10);
+      const periodKey = (d: Date) => d.getUTCFullYear() * 12 + d.getUTCMonth();
+      const RECURRING_KEYWORDS = [
+        "rent", "bill", "electricity", "internet", "wifi", "water", "gas",
+        "maintenance", "subscription", "emi", "dth", "broadband", "society",
+      ];
+      const isRecurringDesc = (s: string) => {
+        const d = normDesc(s);
+        return RECURRING_KEYWORDS.some((k) => d.includes(k));
+      };
+
+      // Snapshot a committed expense as a CSV-shaped row so the frontend RowPreview
+      // can render it next to the staged row.
+      const toRawPreview = (e: typeof committedExpenses[number]) => ({
+        description: e.description,
+        paid_by: userNameById.get(e.paidByUserId) ?? "—",
+        amount: String(Number(e.amountOriginal)),
+        currency: e.amountOriginalCurrency,
+        date: e.date.toISOString(),
+      });
+
+      // Index committed expenses into per-payer series keyed by (description + payer).
+      type Instance = { date: Date; amount: number; exp: typeof committedExpenses[number] };
+      const seriesByKey = new Map<string, { instances: Instance[]; periods: Set<number> }>();
+      const exactByKey = new Map<string, typeof committedExpenses[number]>();
+      for (const e of committedExpenses) {
+        const sKey = `${normDesc(e.description)}|||${e.paidByUserId}`;
+        if (!seriesByKey.has(sKey)) seriesByKey.set(sKey, { instances: [], periods: new Set() });
+        const series = seriesByKey.get(sKey)!;
+        const amount = r2(Number(e.amountOriginal));
+        series.instances.push({ date: e.date, amount, exp: e });
+        series.periods.add(periodKey(e.date));
+        exactByKey.set(`${sKey}|||${dateKey(e.date)}|||${amount}`, e);
+      }
+
+      // Rows already flagged as an exact duplicate WITHIN this file shouldn't also
+      // get a cross-import flag — one decision per row is enough.
+      const intraDuplicateRows = new Set(
+        (await prisma.importAnomaly.findMany({
+          where: { sessionId: session.id, anomalyType: "exact_duplicate" },
+          select: { rowNumber: true },
+        })).map((a) => a.rowNumber)
+      );
+
+      for (const pr of parsedRows) {
+        if (!pr.payerUserId || isNaN(pr.amount) || intraDuplicateRows.has(pr.rowNumber)) continue;
+        const sKey = `${normDesc(pr.description)}|||${pr.payerUserId}`;
+        const series = seriesByKey.get(sKey);
+        if (!series) continue;
+
+        const amount = r2(pr.amount);
+        const rowMonth = `${MONTHS[pr.dateObj.getUTCMonth()]} ${pr.dateObj.getUTCFullYear()}`;
+
+        // 1. Exact cross-import duplicate — same description + payer + date + amount.
+        const exact = exactByKey.get(`${sKey}|||${dateKey(pr.dateObj)}|||${amount}`);
+        if (exact) {
+          await prisma.importAnomaly.create({
+            data: {
+              sessionId: session.id,
+              rowNumber: pr.rowNumber,
+              anomalyType: "cross_import_duplicate",
+              description: `Row ${pr.rowNumber} ("${pr.description}" · ${pr.payerName} · ${amount} on ${dateKey(pr.dateObj)}) already exists in this group's ledger — it was most likely imported before.`,
+              rawRow: pr.raw,
+              resolution: "pending",
+              editedValue: { existingExpenseId: exact.id, existingRow: toRawPreview(exact) },
+            },
+          });
+          continue;
+        }
+
+        const recurring =
+          series.periods.size >= 2 || (isRecurringDesc(pr.description) && series.instances.length >= 1);
+
+        // 2. Recurring expense whose month is already booked → re-import of that month.
+        if (recurring && series.periods.has(periodKey(pr.dateObj))) {
+          const sameMonth =
+            series.instances.find((i) => periodKey(i.date) === periodKey(pr.dateObj)) ?? series.instances[0];
+          await prisma.importAnomaly.create({
+            data: {
+              sessionId: session.id,
+              rowNumber: pr.rowNumber,
+              anomalyType: "recurring_period_duplicate",
+              description: `"${pr.description}" for ${rowMonth} already exists (recurring expense paid by ${pr.payerName}). Importing it again would double-count this month.`,
+              rawRow: pr.raw,
+              resolution: "pending",
+              editedValue: { existingExpenseId: sameMonth.exp.id, existingRow: toRawPreview(sameMonth.exp) },
+            },
+          });
+          continue;
+        }
+
+        // recurring + a brand-new month → legitimate new instance, intentionally not flagged.
+        if (recurring) continue;
+
+        // 3. Non-recurring near-duplicate — same description + payer + amount, dates within
+        //    3 days but not identical (likely an accidental double-entry).
+        const near = series.instances.find((i) => {
+          const diffDays = Math.abs(i.date.getTime() - pr.dateObj.getTime()) / 86_400_000;
+          return diffDays > 0 && diffDays <= 3 && i.amount === amount;
+        });
+        if (near) {
+          await prisma.importAnomaly.create({
+            data: {
+              sessionId: session.id,
+              rowNumber: pr.rowNumber,
+              anomalyType: "possible_double_entry",
+              description: `Row ${pr.rowNumber} ("${pr.description}" · ${pr.payerName} · ${amount}) closely matches an existing expense on ${dateKey(near.date)} (this row is dated ${dateKey(pr.dateObj)}). It may be an accidental double-entry.`,
+              rawRow: pr.raw,
+              resolution: "pending",
+              editedValue: { existingExpenseId: near.exp.id, existingRow: toRawPreview(near.exp) },
             },
           });
         }

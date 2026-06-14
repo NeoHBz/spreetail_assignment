@@ -72,15 +72,19 @@ export default function Dashboard() {
     <div className="max-w-6xl mx-auto px-4 py-8 animate-fade-in">
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold text-slate-100">Your Groups</h1>
-        <form onSubmit={handleCreateGroup} className="flex gap-2">
-          <Input
-            type="text"
-            placeholder="New Group Name"
-            value={newGroupName}
-            onChange={(e) => setNewGroupName(e.target.value)}
-            required
-            className="w-56"
-          />
+        <form onSubmit={handleCreateGroup} className="flex gap-2 items-end">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="new-group-name" className="text-xs text-slate-400 font-medium">Group Name</label>
+            <Input
+              id="new-group-name"
+              type="text"
+              placeholder="e.g. Trip to Bali"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              required
+              className="w-56"
+            />
+          </div>
           <Button type="submit" variant="default">
             Create Group
           </Button>

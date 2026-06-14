@@ -39,11 +39,17 @@ interface Member {
 interface ImportPanelProps {
   groupId: string;
   onImportComplete: () => void;
+  // Scroll-to + highlight a committed expense in the parent ledger. Used by the
+  // "Already in ledger" cross-import-duplicate cards to point at the matching entry.
+  onJumpToExpense?: (expenseId: string) => void;
 }
 
 // ─── Anomaly display config ─────────────────────────────────────────────────────
 const ANOMALY_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   exact_duplicate:          { label: "Exact Duplicate",        color: "#f59e0b", bg: "rgba(245,158,11,0.1)" },
+  cross_import_duplicate:   { label: "Already Imported",        color: "#ef4444", bg: "rgba(239,68,68,0.1)"  },
+  recurring_period_duplicate:{ label: "Recurring Re-Import",    color: "#f59e0b", bg: "rgba(245,158,11,0.1)" },
+  possible_double_entry:    { label: "Possible Double-Entry",  color: "#f97316", bg: "rgba(249,115,22,0.1)" },
   non_member_payer:         { label: "Non-Member Payer",       color: "#ef4444", bg: "rgba(239,68,68,0.1)"  },
   conflicting_duplicate:    { label: "Conflicting Duplicate",  color: "#f97316", bg: "rgba(249,115,22,0.1)" },
   settlement_candidate:     { label: "Settlement Candidate",   color: "#0ea5e9", bg: "rgba(14,165,233,0.1)" },
@@ -85,6 +91,9 @@ const SECTION_TITLES: Record<string, string> = {
   conflicting_duplicate:    "Conflicting Duplicates",
   non_member_payer:         "Non-Member Payer",
   exact_duplicate:          "Exact Duplicates",
+  cross_import_duplicate:   "Already in Ledger",
+  recurring_period_duplicate: "Recurring Re-Imports",
+  possible_double_entry:    "Possible Double-Entries",
   ambiguous_date:           "Date Ambiguity",
   invalid_date:             "Invalid Dates",
   missing_payer:            "Missing Payer",
@@ -115,6 +124,7 @@ const SECTION_TITLES: Record<string, string> = {
 // (see `addedMembers`). Resolving the source before its consumers keeps the dropdowns
 // populated in the order the user works down the list.
 const SECTION_ORDER: string[] = [
+  "cross_import_duplicate", "recurring_period_duplicate", "possible_double_entry",
   "conflicting_duplicate", "exact_duplicate", "ambiguous_date",
   "non_member_payer", "missing_payer", "unknown_payer", "inactive_member_payer",
   "invalid_percentage_sum", "malformed_amount", "zero_amount",
@@ -136,6 +146,14 @@ const AUTO_FIXED_TYPES = new Set([
   "whitespace_payer", "case_inconsistency_payer", "whitespace_amount", "sub_paisa_precision",
   "missing_currency", "missing_year", "negative_amount", "visitor_payer",
   "post_exit_split", "pre_join_split", "non_member_split", "type_detail_mismatch",
+  "non_member_payer",
+]);
+
+// Duplicates detected against expenses ALREADY committed to the group (not just
+// against other rows in this file). Each carries the matching existing expense in
+// editedValue.existingRow and shares the same "Skip / Import anyway" decision UI.
+const CROSS_DUP_TYPES = new Set([
+  "cross_import_duplicate", "recurring_period_duplicate", "possible_double_entry",
 ]);
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -314,7 +332,7 @@ function RowPreview({ rawRow, label, highlight = false }: RowPreviewProps) {
 }
 
 // ─── Main component ─────────────────────────────────────────────────────────────
-export default function ImportPanel({ groupId, onImportComplete }: ImportPanelProps) {
+export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense }: ImportPanelProps) {
   const [file, setFile] = useState<File | null>(null);
   const [session, setSession] = useState<ImportSession | null>(null);
   const [loading, setLoading] = useState(false);
@@ -711,6 +729,11 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
     const conflictFirstRowNum = isConflict ? getConflictFirstRowNum(anom) : null;
     const conflictFirstRowData = isConflict ? getConflictFirstRow(anom) : null;
 
+    // Cross-import duplicates carry the matching already-committed expense in
+    // editedValue.existingRow so we can show it beside the staged row.
+    const isCrossDup = CROSS_DUP_TYPES.has(anom.anomalyType);
+    const existingRow = isCrossDup ? anom.editedValue?.existingRow : null;
+
     return (
       <div
         key={anom.id}
@@ -767,6 +790,22 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
               highlight
             />
           </div>
+        ) : isCrossDup && existingRow ? (
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-2 gap-2.5">
+              <RowPreview rawRow={existingRow} label="Already in ledger" />
+              <RowPreview rawRow={anom.rawRow} label={`Row ${anom.rowNumber} (this row)`} highlight />
+            </div>
+            {onJumpToExpense && anom.editedValue?.existingExpenseId && (
+              <button
+                type="button"
+                onClick={() => onJumpToExpense(anom.editedValue.existingExpenseId)}
+                className="self-start text-xs text-indigo-400 hover:text-indigo-300 font-medium underline-offset-2 hover:underline"
+              >
+                ↑ View matching entry in the ledger above
+              </button>
+            )}
+          </div>
         ) : (
           anom.rawRow && <RowPreview rawRow={anom.rawRow} />
         )}
@@ -785,6 +824,26 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                   </ActionBtn>
                   <ActionBtn color="#ef4444" onClick={() => handleResolve(anom.id, "user_rejected")}>
                     Discard Duplicate
+                  </ActionBtn>
+                </>
+              )}
+
+              {isCrossDup && (
+                <>
+                  <ActionBtn
+                    color="#10b981"
+                    outline
+                    tooltip="Imports this row anyway — use if it's genuinely a separate expense."
+                    onClick={() => handleResolve(anom.id, "user_approved")}
+                  >
+                    Import Anyway
+                  </ActionBtn>
+                  <ActionBtn
+                    color="#ef4444"
+                    tooltip="Excludes this row — the matching expense is already in the ledger."
+                    onClick={() => handleResolve(anom.id, "user_rejected")}
+                  >
+                    Skip — Already Imported
                   </ActionBtn>
                 </>
               )}
@@ -874,38 +933,6 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                 </div>
               )}
 
-              {/* non-member payer → add to group, import without adding, or skip */}
-              {anom.anomalyType === "non_member_payer" && (() => {
-                const payerLabel = (anom.editedValue?.candidateName ?? anom.rawRow?.paid_by)?.toString().trim() || "this payer";
-                return (
-                  <div className="flex gap-2 flex-wrap items-center">
-                    <ActionBtn
-                      color="#6366f1"
-                      tooltip={`Adds ${payerLabel} to this group as a member (joining on the expense date) and imports the row. ${payerLabel} also becomes selectable when mapping other rows.`}
-                      onClick={() => handleAddAsMember(anom.id)}
-                    >
-                      Add {payerLabel} to Group &amp; Import
-                    </ActionBtn>
-                    <ActionBtn
-                      color="#10b981"
-                      outline
-                      tooltip={`Imports this expense paid by ${payerLabel} without adding them to the group — for a one-time payer who isn't a flatmate.`}
-                      onClick={() => handleResolve(anom.id, "user_approved")}
-                    >
-                      Import Without Adding to Group
-                    </ActionBtn>
-                    <ActionBtn
-                      color="#94a3b8"
-                      outline
-                      tooltip="Excludes this row from the import."
-                      onClick={() => handleResolve(anom.id, "user_rejected")}
-                    >
-                      Skip This Row
-                    </ActionBtn>
-                  </div>
-                );
-              })()}
-
               {/* malformed amount → type the correct value, or skip */}
               {anom.anomalyType === "malformed_amount" && (
                 <div className="flex flex-col gap-1.5">
@@ -955,7 +982,7 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
 
               {/* generic fallback: covers truly-pending types (invalid_date, inactive_member_payer)
                   AND auto-fixed types that were reset to pending via "Change Decision" */}
-              {!["exact_duplicate", "conflicting_duplicate", "settlement_candidate", "ambiguous_date", "invalid_percentage_sum", "missing_payer", "unknown_payer", "non_member_payer", "malformed_amount", "zero_amount"].includes(anom.anomalyType) && (
+              {!["exact_duplicate", "conflicting_duplicate", "settlement_candidate", "ambiguous_date", "invalid_percentage_sum", "missing_payer", "unknown_payer", "malformed_amount", "zero_amount"].includes(anom.anomalyType) && !isCrossDup && (
                 AUTO_FIXED_TYPES.has(anom.anomalyType) && anom.resolutionNotes ? (
                   <div className="flex flex-col gap-2 w-full">
                     <div className="flex gap-2 flex-wrap items-center">
@@ -1028,6 +1055,16 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                         tooltip="Promotes this visitor to a full group member (joining on the expense date)."
                         onClick={() => handleAddAsMember(anom.id)}>
                         Add as Member Instead
+                      </ActionBtn>
+                    )}
+                    {anom.anomalyType === "non_member_payer" && (
+                      <ActionBtn
+                        color="#10b981"
+                        outline
+                        tooltip={`Imports the row without adding ${(anom.editedValue?.candidateName ?? anom.rawRow?.paid_by)?.toString().trim() || "this payer"} to the group.`}
+                        onClick={() => handleResolve(anom.id, "user_approved", { ...(anom.editedValue ?? {}), addAsMember: false })}
+                      >
+                        Import Without Adding to Group
                       </ActionBtn>
                     )}
                   </div>
@@ -1114,6 +1151,16 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                 >
                   Approve Auto-fix
                 </ActionBtn>
+                {anom.anomalyType === "non_member_payer" && (
+                  <ActionBtn
+                    color="#6366f1"
+                    outline
+                    tooltip={`Imports this expense without adding ${(anom.editedValue?.candidateName ?? anom.rawRow?.paid_by)?.toString().trim() || "this payer"} to the group — for a one-time payer who isn't a flatmate.`}
+                    onClick={() => handleResolve(anom.id, "user_approved", { ...(anom.editedValue ?? {}), addAsMember: false })}
+                  >
+                    Import Without Adding to Group
+                  </ActionBtn>
+                )}
                 {anom.anomalyType === "visitor_payer" && (
                   <ActionBtn
                     color="#6366f1"
@@ -1169,6 +1216,7 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                  : anom.anomalyType === "settlement_candidate" ? "Will be converted to a settlement."
                  : anom.anomalyType === "conflicting_duplicate" ? `Row ${anom.rowNumber} data will be used.`
                  : anom.anomalyType === "exact_duplicate" ? "Row will be kept."
+                 : isCrossDup ? "Will be imported despite matching an existing expense."
                  : "Row will be imported."}
               </span>
               <ActionBtn color="#64748b" outline onClick={() => handleResolve(anom.id, "pending")}>
@@ -1349,37 +1397,6 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                   </div>
                 </div>
               )}
-              {/* non-member payers → add all to the group, import without adding, or skip */}
-              {rep.anomalyType === "non_member_payer" && (() => {
-                const payerLabel = (rep.editedValue?.candidateName ?? rep.rawRow?.paid_by)?.toString().trim() || "this payer";
-                return (
-                  <>
-                    <ActionBtn
-                      color="#6366f1"
-                      tooltip={`Adds ${payerLabel} to the group as a member (joining on each expense date) and imports all ${pendingIds.length} rows. ${payerLabel} also becomes selectable when mapping other rows.`}
-                      onClick={() => handleAddAsMemberMany(pendingIds)}
-                    >
-                      Add {payerLabel} to Group &amp; Import All {pendingIds.length}
-                    </ActionBtn>
-                    <ActionBtn
-                      color="#10b981"
-                      outline
-                      tooltip={`Imports all ${pendingIds.length} expenses paid by ${payerLabel} without adding them to the group.`}
-                      onClick={() => handleResolveMany(pendingIds, "user_approved")}
-                    >
-                      Import All Without Adding to Group
-                    </ActionBtn>
-                    <ActionBtn
-                      color="#94a3b8"
-                      outline
-                      tooltip="Excludes all these rows from the import."
-                      onClick={() => handleResolveMany(pendingIds, "user_rejected")}
-                    >
-                      Skip All {pendingIds.length}
-                    </ActionBtn>
-                  </>
-                );
-              })()}
               {/* malformed amounts (same bad value) → apply one correction to all */}
               {rep.anomalyType === "malformed_amount" && (
                 <div className="flex flex-col gap-1.5 w-full">
@@ -1401,7 +1418,17 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                 </div>
               )}
               {/* generic fallback: covers truly-pending types AND auto-fixed types reset via "Change Decision" */}
-              {!["exact_duplicate", "conflicting_duplicate", "settlement_candidate", "ambiguous_date", "invalid_percentage_sum", "missing_payer", "unknown_payer", "non_member_payer", "malformed_amount"].includes(rep.anomalyType) && (
+              {rep.anomalyType !== "exact_duplicate" && CROSS_DUP_TYPES.has(rep.anomalyType) && (
+                <>
+                  <ActionBtn color="#ef4444" onClick={() => handleResolveMany(pendingIds, "user_rejected")}>
+                    Skip All {pendingIds.length} — Already Imported
+                  </ActionBtn>
+                  <ActionBtn color="#10b981" outline onClick={() => handleResolveMany(pendingIds, "user_approved")}>
+                    Import All {pendingIds.length} Anyway
+                  </ActionBtn>
+                </>
+              )}
+              {!["exact_duplicate", "conflicting_duplicate", "settlement_candidate", "ambiguous_date", "invalid_percentage_sum", "missing_payer", "unknown_payer", "malformed_amount"].includes(rep.anomalyType) && !CROSS_DUP_TYPES.has(rep.anomalyType) && (
                 AUTO_FIXED_TYPES.has(rep.anomalyType) && rep.resolutionNotes ? (
                   <div className="flex flex-col gap-2 w-full">
                     <div className="flex gap-2 flex-wrap items-center">
@@ -1455,6 +1482,16 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                         tooltip="Overrides the auto-removal and keeps these members in their splits."
                         onClick={() => handleResolveMany(pendingIds, "user_approved", { keepInSplit: true })}>
                         Keep All {pendingIds.length} in Split
+                      </ActionBtn>
+                    )}
+                    {rep.anomalyType === "non_member_payer" && (
+                      <ActionBtn
+                        color="#10b981"
+                        outline
+                        tooltip="Imports all rows without adding the payer to the group."
+                        onClick={() => handleResolveMany(pendingIds, "user_approved", { addAsMember: false })}
+                      >
+                        Import All {pendingIds.length} Without Adding to Group
                       </ActionBtn>
                     )}
                   </div>
@@ -1529,6 +1566,16 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                 >
                   Approve All {group.length} Auto-fixes
                 </ActionBtn>
+                {rep.anomalyType === "non_member_payer" && (
+                  <ActionBtn
+                    color="#6366f1"
+                    outline
+                    tooltip={`Imports all ${group.length} rows without adding ${(rep.editedValue?.candidateName ?? rep.rawRow?.paid_by)?.toString().trim() || "this payer"} to the group.`}
+                    onClick={() => handleResolveMany(ids, "user_approved", { addAsMember: false })}
+                  >
+                    Import All {group.length} Without Adding to Group
+                  </ActionBtn>
+                )}
                 {rep.anomalyType === "visitor_payer" && (
                   <ActionBtn
                     color="#6366f1"

@@ -108,6 +108,10 @@ export default function GroupDetails() {
   const [paidBy, setPaidBy] = useState("");
   const [expenseDate, setExpenseDate] = useState("");
 
+  // Transiently highlighted expense — set when a cross-import-duplicate card in the
+  // ImportPanel asks to point at its matching ledger entry. Cleared after a short delay.
+  const [highlightedExpenseId, setHighlightedExpenseId] = useState<string | null>(null);
+
   // Edit expense state
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [editDesc, setEditDesc] = useState("");
@@ -414,6 +418,21 @@ export default function GroupDetails() {
     }
   };
 
+  // Scroll the matching ledger entry into view and flash a highlight on it.
+  const handleJumpToExpense = (expenseId: string) => {
+    const el = document.getElementById(`expense-${expenseId}`);
+    if (!el) {
+      setError("That expense is no longer in the ledger.");
+      return;
+    }
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedExpenseId(expenseId);
+    window.setTimeout(
+      () => setHighlightedExpenseId((cur) => (cur === expenseId ? null : cur)),
+      2500,
+    );
+  };
+
   if (!group) return <div className="max-w-6xl mx-auto px-4 py-8"><p className="text-slate-400">Loading...</p></div>;
 
   return (
@@ -425,7 +444,7 @@ export default function GroupDetails() {
           <h1 className="mt-2 text-2xl font-bold text-slate-100">{group.name}</h1>
         </div>
         <div className="flex gap-2 items-center">
-          <label className="text-sm text-slate-400">As of Date:</label>
+          <label className="text-sm text-slate-400">View As of Date:</label>
           <Input
             type="date"
             value={asOfDate}
@@ -476,22 +495,30 @@ export default function GroupDetails() {
             </div>
 
             {/* Add Member form */}
-            <form onSubmit={handleAddMember} className="flex gap-2 mt-4">
-              <Input
-                type="email"
-                placeholder="User Email"
-                value={memberEmail}
-                onChange={(e) => setMemberEmail(e.target.value)}
-                required
-                className="flex-1 bg-black/20 border-white/8 text-white"
-              />
-              <Input
-                type="date"
-                value={memberJoinDate}
-                onChange={(e) => setMemberJoinDate(e.target.value)}
-                required
-                className="w-auto bg-black/20 border-white/8 text-white"
-              />
+            <form onSubmit={handleAddMember} className="flex gap-2 mt-4 items-end">
+              <div className="flex flex-col gap-1 flex-1">
+                <label htmlFor="member-email" className="text-xs text-slate-400 font-medium">Email</label>
+                <Input
+                  id="member-email"
+                  type="email"
+                  placeholder="user@example.com"
+                  value={memberEmail}
+                  onChange={(e) => setMemberEmail(e.target.value)}
+                  required
+                  className="bg-black/20 border-white/8 text-white"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="member-join-date" className="text-xs text-slate-400 font-medium">Join Date</label>
+                <Input
+                  id="member-join-date"
+                  type="date"
+                  value={memberJoinDate}
+                  onChange={(e) => setMemberJoinDate(e.target.value)}
+                  required
+                  className="w-auto bg-black/20 border-white/8 text-white"
+                />
+              </div>
               <Button type="submit" size="sm">Add Member</Button>
             </form>
           </div>
@@ -514,7 +541,16 @@ export default function GroupDetails() {
                 <p className="text-slate-500 text-sm">No expenses recorded yet.</p>
               ) : (
                 expenses.map((e) => (
-                  <div key={e.id} className="py-4 border-b border-white/8 last:border-0">
+                  <div
+                    key={e.id}
+                    id={`expense-${e.id}`}
+                    className={`py-4 border-b border-white/8 last:border-0 transition-all duration-500 ${
+                      highlightedExpenseId === e.id
+                        ? "bg-indigo-500/10 ring-2 ring-indigo-500/60 rounded-lg -mx-2 px-2"
+                        : ""
+                    }`}
+                  >
+
                     <div className="flex justify-between items-start gap-4">
                       <div className="flex-1 min-w-0">
                         <strong className="text-[0.95rem] block mb-1 text-slate-100">{e.description}</strong>
@@ -577,28 +613,34 @@ export default function GroupDetails() {
                     {editingExpenseId === e.id && (
                       <div className="mt-3 p-3 bg-indigo-500/6 border border-indigo-500/25 rounded-md flex flex-col gap-2">
                         <span className="text-[0.72rem] text-slate-500 uppercase tracking-wide font-bold">Edit Expense</span>
-                        <Input
-                          type="text"
-                          value={editDesc}
-                          onChange={(ev) => setEditDesc(ev.target.value)}
-                          placeholder="Description"
-                          className="bg-black/20 border-white/8 text-white"
-                        />
-                        <Input
-                          type="number"
-                          value={editAmount}
-                          onChange={(ev) => setEditAmount(ev.target.value)}
-                          placeholder="Amount"
-                          step="0.01"
-                          className="bg-black/20 border-white/8 text-white"
-                        />
-                        <Input
-                          type="text"
-                          value={editNotes}
-                          onChange={(ev) => setEditNotes(ev.target.value)}
-                          placeholder="Notes (optional)"
-                          className="bg-black/20 border-white/8 text-white"
-                        />
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-slate-400 font-medium">Description</label>
+                          <Input
+                            type="text"
+                            value={editDesc}
+                            onChange={(ev) => setEditDesc(ev.target.value)}
+                            className="bg-black/20 border-white/8 text-white"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-slate-400 font-medium">Amount</label>
+                          <Input
+                            type="number"
+                            value={editAmount}
+                            onChange={(ev) => setEditAmount(ev.target.value)}
+                            step="0.01"
+                            className="bg-black/20 border-white/8 text-white"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-slate-400 font-medium">Notes <span className="text-slate-600">(optional)</span></label>
+                          <Input
+                            type="text"
+                            value={editNotes}
+                            onChange={(ev) => setEditNotes(ev.target.value)}
+                            className="bg-black/20 border-white/8 text-white"
+                          />
+                        </div>
                         <div className="flex gap-2">
                           <Button size="sm" onClick={() => handleEditExpense(e.id)}>Save</Button>
                           <Button variant="outline" size="sm" onClick={() => setEditingExpenseId(null)}>Cancel</Button>
@@ -685,53 +727,64 @@ export default function GroupDetails() {
             <DialogTitle className="text-slate-100">Record Payment</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreateSettlement} className="flex flex-col gap-3">
-            <Select value={setFrom} onValueChange={setSetFrom} required>
-              <SelectTrigger className="bg-black/20 border-white/8 text-slate-100">
-                <SelectValue placeholder="Who paid?" />
-              </SelectTrigger>
-              <SelectContent className="bg-slate-900 border-white/8">
-                {group.members.map((m: any) => (
-                  <SelectItem key={m.id} value={m.id} className="text-slate-100">{m.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={setTo} onValueChange={setSetTo} required>
-              <SelectTrigger className="bg-black/20 border-white/8 text-slate-100">
-                <SelectValue placeholder="To whom?" />
-              </SelectTrigger>
-              <SelectContent className="bg-slate-900 border-white/8">
-                {group.members.map((m: any) => (
-                  <SelectItem key={m.id} value={m.id} className="text-slate-100">{m.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="flex gap-2">
-              <Input
-                type="number"
-                placeholder="Amount"
-                value={setAmountVal}
-                onChange={(e) => setSetAmountVal(e.target.value)}
-                required
-                className="flex-1 bg-black/20 border-white/8 text-white"
-              />
-              <Select value={settlementCurrency} onValueChange={setSettlementCurrency}>
-                <SelectTrigger className="w-32 bg-black/20 border-white/8 text-slate-100">
-                  <SelectValue />
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400 font-medium">Paid by</label>
+              <Select value={setFrom} onValueChange={setSetFrom} required>
+                <SelectTrigger className="bg-black/20 border-white/8 text-slate-100">
+                  <SelectValue placeholder="Select member" />
                 </SelectTrigger>
                 <SelectContent className="bg-slate-900 border-white/8">
-                  {CURRENCIES.map((c) => (
-                    <SelectItem key={c.code} value={c.code} className="text-slate-100">{c.label}</SelectItem>
+                  {group.members.map((m: any) => (
+                    <SelectItem key={m.id} value={m.id} className="text-slate-100">{m.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <Input
-              type="date"
-              value={setDateVal}
-              onChange={(e) => setSetDateVal(e.target.value)}
-              required
-              className="bg-black/20 border-white/8 text-white"
-            />
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400 font-medium">Received by</label>
+              <Select value={setTo} onValueChange={setSetTo} required>
+                <SelectTrigger className="bg-black/20 border-white/8 text-slate-100">
+                  <SelectValue placeholder="Select member" />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-900 border-white/8">
+                  {group.members.map((m: any) => (
+                    <SelectItem key={m.id} value={m.id} className="text-slate-100">{m.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400 font-medium">Amount</label>
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  value={setAmountVal}
+                  onChange={(e) => setSetAmountVal(e.target.value)}
+                  required
+                  className="flex-1 bg-black/20 border-white/8 text-white"
+                />
+                <Select value={settlementCurrency} onValueChange={setSettlementCurrency}>
+                  <SelectTrigger className="w-32 bg-black/20 border-white/8 text-slate-100">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-900 border-white/8">
+                    {CURRENCIES.map((c) => (
+                      <SelectItem key={c.code} value={c.code} className="text-slate-100">{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400 font-medium">Date</label>
+              <Input
+                type="date"
+                value={setDateVal}
+                onChange={(e) => setSetDateVal(e.target.value)}
+                required
+                className="bg-black/20 border-white/8 text-white"
+              />
+            </div>
             <div className="flex gap-2 mt-1">
               <Button type="submit" className="flex-1 bg-emerald-500 hover:bg-emerald-600">Record Payment</Button>
               <Button type="button" variant="outline" onClick={() => setShowSettlementModal(false)}>Cancel</Button>
@@ -747,9 +800,10 @@ export default function GroupDetails() {
           </DialogHeader>
           <form onSubmit={handleCreateExpense} className="flex flex-col gap-3">
             <div className="flex flex-col gap-1">
+              <label htmlFor="expense-desc" className="text-xs text-slate-400 font-medium">Description</label>
               <Input
+                id="expense-desc"
                 type="text"
-                placeholder="Description"
                 value={desc}
                 onChange={(e) => { setDesc(e.target.value); setFormErrors((prev) => ({ ...prev, desc: "" })); }}
                 className={`bg-black/20 border-white/8 text-white ${formErrors.desc ? "border-red-500/60 bg-red-500/8" : ""}`}
@@ -757,10 +811,10 @@ export default function GroupDetails() {
               {formErrors.desc && <span className="text-red-400 text-[0.78rem]">{formErrors.desc}</span>}
             </div>
             <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400 font-medium">Amount</label>
               <div className="flex gap-2">
                 <Input
                   type="number"
-                  placeholder="Amount"
                   value={amount}
                   onChange={(e) => { setAmount(e.target.value); setFormErrors((prev) => ({ ...prev, amount: "" })); }}
                   className={`flex-1 bg-black/20 border-white/8 text-white ${formErrors.amount ? "border-red-500/60 bg-red-500/8" : ""}`}
@@ -784,9 +838,10 @@ export default function GroupDetails() {
               )}
             </div>
             <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400 font-medium">Paid by</label>
               <Select value={paidBy} onValueChange={(v) => { setPaidBy(v); setFormErrors((prev) => ({ ...prev, paidBy: "" })); }}>
                 <SelectTrigger className={`bg-black/20 border-white/8 text-slate-100 ${formErrors.paidBy ? "border-red-500/60" : ""}`}>
-                  <SelectValue placeholder="Paid By..." />
+                  <SelectValue placeholder="Select member" />
                 </SelectTrigger>
                 <SelectContent className="bg-slate-900 border-white/8">
                   {group.members.map((m: any) => (
@@ -796,17 +851,20 @@ export default function GroupDetails() {
               </Select>
               {formErrors.paidBy && <span className="text-red-400 text-[0.78rem]">{formErrors.paidBy}</span>}
             </div>
-            <Select value={splitType} onValueChange={(v) => { setSplitType(v); setFormErrors((prev) => ({ ...prev, splits: "" })); }}>
-              <SelectTrigger className="bg-black/20 border-white/8 text-slate-100">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-slate-900 border-white/8">
-                <SelectItem value="equal" className="text-slate-100">Equal</SelectItem>
-                <SelectItem value="unequal" className="text-slate-100">Unequal</SelectItem>
-                <SelectItem value="percentage" className="text-slate-100">Percentage</SelectItem>
-                <SelectItem value="share" className="text-slate-100">Share (weighted)</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400 font-medium">Split type</label>
+              <Select value={splitType} onValueChange={(v) => { setSplitType(v); setFormErrors((prev) => ({ ...prev, splits: "" })); }}>
+                <SelectTrigger className="bg-black/20 border-white/8 text-slate-100">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-900 border-white/8">
+                  <SelectItem value="equal" className="text-slate-100">Equal</SelectItem>
+                  <SelectItem value="unequal" className="text-slate-100">Unequal</SelectItem>
+                  <SelectItem value="percentage" className="text-slate-100">Percentage</SelectItem>
+                  <SelectItem value="share" className="text-slate-100">Share (weighted)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
             {splitType !== "equal" && group.members.filter((m: Member) => {
               if (!expenseDate) return !m.leftAt;
@@ -860,7 +918,9 @@ export default function GroupDetails() {
             {formErrors.splits && <span className="text-red-400 text-[0.78rem]">{formErrors.splits}</span>}
 
             <div className="flex flex-col gap-1">
+              <label htmlFor="expense-date" className="text-xs text-slate-400 font-medium">Date</label>
               <Input
+                id="expense-date"
                 type="date"
                 value={expenseDate}
                 onChange={(e) => { setExpenseDate(e.target.value); setFormErrors((prev) => ({ ...prev, expenseDate: "" })); }}
@@ -925,7 +985,7 @@ export default function GroupDetails() {
       )}
 
       {/* CSV Import Pipeline */}
-      <ImportPanel groupId={id!} onImportComplete={loadAll} />
+      <ImportPanel groupId={id!} onImportComplete={loadAll} onJumpToExpense={handleJumpToExpense} />
     </div>
   );
 }
