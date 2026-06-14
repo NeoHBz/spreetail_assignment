@@ -4,6 +4,7 @@ This document lists the AI tools used, key prompts, and cases where the agent pr
 
 ## AI Tools Used
 - Gemini 3.5 Flash (Low) via Antigravity Agentic system.
+- Claude Sonnet 4.6 via Claude Code
 
 ## Key Prompts & Tasks
 - Initial repository analysis and anomaly cataloging.
@@ -34,6 +35,11 @@ This document lists the AI tools used, key prompts, and cases where the agent pr
    - *Issue*: The balance engine built its members map exclusively from `group_memberships`. Dev has a `users` row but no membership. So when Dev's paid expenses were processed, `membersMap[e.paidByUserId]` was `undefined` and his credit was silently dropped — the group's net balances were wrong.
    - *How caught*: Audit review of the balance computation loop compared against the schema design note that "only users can be paid_by" and Dev is a user.
    - *Fix*: After building the base membersMap, the code now iterates expenses and inserts any payer not already in the map, ensuring all non-member payers appear in balance output.
+
+7. **Add Expense form allowed submission with invalid split sums**:
+   - *Issue*: The "Add Expense" form displayed a running total warning (orange text) when percentage splits did not sum to 100% or unequal amounts did not match the total — but the form still submitted, causing a server error deep in the split calculation layer rather than surfacing a clear user-facing error.
+   - *How caught*: Auditing the `handleCreateExpense` function found no guard before the API call; validation was purely visual, not enforced at submission.
+   - *Fix*: Added pre-submit validation in `handleCreateExpense` that accumulates field-level errors, sets red border styling per invalid input, and returns early without calling the API. Submission is blocked until all sums are valid.
 
 6. **Percentage auto-equalize button sent empty object, crashing commit transaction**:
    - *Issue*: The "Auto-Equalize Percentages" button in ImportPanel passed `percentages: {}` to the anomaly resolution. The commit handler read this as "no overrides" and fell through to the raw `split_details` which still summed to 110%. This caused `splitPercentage()` to throw, rolling back the entire commit transaction.

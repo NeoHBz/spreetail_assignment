@@ -138,9 +138,9 @@ Stack: Bun + Express + Prisma + PostgreSQL (backend) | React + Vite (frontend) |
   - [x] Split type selector (equal / unequal / percentage / share)
   - [x] Dynamic split-with fields based on split type (per-person amount/percentage/weight inputs with live running total)
   - [x] Real-time split preview (running total shown for unequal and percentage types)
-  - [ ] Validation messages inline
-- [ ] Edit expense form (prefilled)
-- [ ] Delete confirmation dialog
+  - [x] Validation messages inline
+- [x] Edit expense form (prefilled)
+- [x] Delete confirmation dialog
 
 ---
 
@@ -307,26 +307,26 @@ For each row, detect and annotate the following anomalies.
 Row numbers are 1-indexed from the raw file (row 1 = header, row 2 = first data row).
 Verify against `csv_inputs/expenses_export.csv` before referencing in SCOPE.md.
 
-- [ ] Rows 5+6 — exact duplicate: "Dinner at Marina Bites" / "dinner - marina bites" (same date, amount, payer)
-- [ ] Row 7 — malformed amount: `"1,200"` (comma as thousands separator)
-- [ ] Row 9 — case inconsistency: `paid_by = priya` → normalize to `Priya`
-- [ ] Row 10 — sub-paisa precision: `899.995`
-- [ ] Row 11 — unknown payer: `Priya S` (not in canonical list after fuzzy match)
-- [ ] Row 13 — missing payer: `paid_by` is empty
-- [ ] Row 14 — settlement logged as expense: "Rohan paid Aisha back", `split_type` is empty
-- [ ] Row 15 — percentage sum != 100%: 30+30+30+20 = 110%
-- [ ] Rows 16+ — inconsistent date formats: YYYY-MM-DD → DD/MM/YYYY → "Mar 14" → back
-- [ ] Row 23 — non-member in split: "Dev's friend Kabir"
-- [ ] Rows 24+25 — conflicting duplicate: Thalassa dinner (₹2400 vs ₹2450, different payers)
-- [ ] Row 26 — negative amount: `-30 USD` (parasailing refund)
-- [ ] Row 27 — **two anomalies on one row**: (a) trailing whitespace payer `rohan ` and (b) missing year in date "Mar 14" — parser emits two separate `import_anomalies` records for this row
-- [ ] Row 28 — missing currency: `currency` is empty
-- [ ] Row 29 — whitespace in amount: `" 1450 "` (leading + trailing spaces)
-- [ ] Row 31 — zero amount: `amount = 0`
-- [ ] Row 34 — ambiguous date: `04/05/2026` (April 5 or May 4?)
-- [ ] Row 36 — post-exit member in split: Meera included in April 2 grocery split after leaving March 31
-- [ ] Row 38 — settlement logged as expense: "Sam deposit share" (single recipient, deposit context)
-- [ ] Row 42 — type/detail mismatch: `split_type = equal` but per-person share weights present in `split_details`
+- [x] Rows 5+6 — exact duplicate: "Dinner at Marina Bites" / "dinner - marina bites" (same date, amount, payer)
+- [x] Row 7 — malformed amount: `"1,200"` (comma as thousands separator)
+- [x] Row 9 — case inconsistency: `paid_by = priya` → normalize to `Priya`
+- [x] Row 10 — sub-paisa precision: `899.995`
+- [x] Row 11 — unknown payer: `Priya S` (not in canonical list after fuzzy match)
+- [x] Row 13 — missing payer: `paid_by` is empty
+- [x] Row 14 — settlement logged as expense: "Rohan paid Aisha back", `split_type` is empty
+- [x] Row 15 — percentage sum != 100%: 30+30+30+20 = 110%
+- [x] Rows 16+ — inconsistent date formats: YYYY-MM-DD → DD/MM/YYYY → "Mar 14" → back
+- [x] Row 23 — non-member in split: "Dev's friend Kabir"
+- [x] Rows 24+25 — conflicting duplicate: Thalassa dinner (₹2400 vs ₹2450, different payers)
+- [x] Row 26 — negative amount: `-30 USD` (parasailing refund)
+- [x] Row 27 — **two anomalies on one row**: (a) trailing whitespace payer `rohan ` and (b) missing year in date "Mar 14" — parser emits two separate `import_anomalies` records for this row
+- [x] Row 28 — missing currency: `currency` is empty
+- [x] Row 29 — whitespace in amount: `" 1450 "` (leading + trailing spaces)
+- [x] Row 31 — zero amount: `amount = 0`
+- [x] Row 34 — ambiguous date: `04/05/2026` (April 5 or May 4?)
+- [x] Row 36 — post-exit member in split: Meera included in April 2 grocery split after leaving March 31
+- [x] Row 38 — settlement logged as expense: "Sam deposit share" (single recipient, deposit context)
+- [x] Row 42 — type/detail mismatch: `split_type = equal` but per-person share weights present in `split_details`
 
 ---
 

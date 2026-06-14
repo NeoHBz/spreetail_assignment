@@ -197,4 +197,79 @@ router.delete("/:expenseId", isAuthenticated, async (req: AuthRequest, res: Resp
   }
 });
 
+// Edit expense (recalculate splits)
+router.patch("/:expenseId", isAuthenticated, async (req: AuthRequest, res: Response) => {
+  const { description, amountOriginal, amountOriginalCurrency, date, splitType, splits, notes } = req.body;
+
+  try {
+    const existing = await prisma.expense.findUnique({ where: { id: req.params.expenseId } });
+    if (!existing || existing.deletedAt) {
+      return res.status(404).json({ error: { code: "NOT_FOUND", message: "Expense not found" } });
+    }
+
+    const expenseDate = date ? new Date(date) : existing.date;
+    const amt = amountOriginal !== undefined ? Number(amountOriginal) : Number(existing.amountOriginal);
+    const curr = amountOriginalCurrency ?? existing.amountOriginalCurrency;
+    const type = splitType ?? existing.splitType;
+
+    let convertedAmountInr = amt;
+    if (curr.toUpperCase() === "USD") {
+      const rateObj = await prisma.exchangeRate.findFirst({
+        where: { fromCurrency: "USD", toCurrency: "INR" },
+        orderBy: { effectiveDate: "desc" },
+      });
+      convertedAmountInr = amt * (rateObj ? Number(rateObj.rate) : 83.0);
+    } else if (curr.toUpperCase() !== "INR") {
+      return res.status(400).json({ error: { code: "BAD_REQUEST", message: "Unsupported currency" } });
+    }
+
+    const groupId = existing.groupId;
+    const inputSplits = splits ?? [];
+    const calculatedSplits = inputSplits.length > 0
+      ? await validateSplitsAndCalculate(amt, curr, expenseDate, groupId, type, inputSplits)
+      : [];
+
+    await prisma.$transaction(async (tx) => {
+      await tx.expense.update({
+        where: { id: req.params.expenseId },
+        data: {
+          description: description ?? existing.description,
+          amountOriginal: amt,
+          amountOriginalCurrency: curr,
+          convertedAmountInr,
+          date: expenseDate,
+          splitType: type,
+          notes: notes !== undefined ? notes : existing.notes,
+        },
+      });
+
+      if (calculatedSplits.length > 0) {
+        // Remove old splits and insert recalculated ones
+        await tx.expenseSplit.deleteMany({ where: { expenseId: req.params.expenseId } });
+        for (const cs of calculatedSplits) {
+          const ratio = amt > 0 ? cs.owedAmount / amt : 0;
+          const owedAmountInr = convertedAmountInr * ratio;
+          await tx.expenseSplit.create({
+            data: {
+              expenseId: req.params.expenseId,
+              userId: cs.userId || null,
+              guestId: cs.guestId || null,
+              owedAmount: owedAmountInr,
+            },
+          });
+        }
+      }
+    });
+
+    const updated = await prisma.expense.findUnique({
+      where: { id: req.params.expenseId },
+      include: { splits: true },
+    });
+    res.json(updated);
+  } catch (error: any) {
+    Logger.error("Failed to update expense", error);
+    res.status(500).json({ error: { code: "INTERNAL_ERROR", message: error.message || "Failed to update expense" } });
+  }
+});
+
 export default router;

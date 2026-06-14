@@ -18,6 +18,7 @@ interface Expense {
   convertedAmountInr: string;
   date: string;
   splitType: string;
+  notes: string | null;
   paidBy: { name: string };
   splits: { user?: { name: string }; guest?: { name: string }; owedAmount: string }[];
 }
@@ -61,6 +62,12 @@ export default function GroupDetails() {
   const [paidBy, setPaidBy] = useState("");
   const [expenseDate, setExpenseDate] = useState("");
 
+  // Edit expense state
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [editDesc, setEditDesc] = useState("");
+  const [editAmount, setEditAmount] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+
   // Settlement Form
   const [setFrom, setSetFrom] = useState("");
   const [setTo, setSetTo] = useState("");
@@ -68,6 +75,7 @@ export default function GroupDetails() {
   const [setDateVal, setSetDateVal] = useState("");
 
   const [error, setError] = useState("");
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
 
   const loadAll = async () => {
@@ -131,6 +139,7 @@ export default function GroupDetails() {
 
   const handleCreateExpense = async (e: React.FormEvent) => {
     e.preventDefault();
+    const errors: Record<string, string> = {};
 
     // Only include members who were active on the selected expense date
     const selectedDate = expenseDate ? new Date(expenseDate) : null;
@@ -140,6 +149,28 @@ export default function GroupDetails() {
       const left = m.leftAt ? new Date(m.leftAt) : null;
       return selectedDate >= joined && (!left || selectedDate <= left);
     });
+
+    // Inline validation
+    if (!desc.trim()) errors.desc = "Description is required.";
+    const parsedAmt = parseFloat(amount);
+    if (!amount || isNaN(parsedAmt) || parsedAmt <= 0) errors.amount = "Enter a valid positive amount.";
+    if (!paidBy) errors.paidBy = "Select who paid.";
+    if (!expenseDate) errors.expenseDate = "Select an expense date.";
+
+    if (splitType === "percentage") {
+      const pctSum = Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0);
+      if (Math.abs(pctSum - 100) > 0.01) errors.splits = `Percentages must sum to 100% (currently ${pctSum.toFixed(1)}%).`;
+    }
+    if (splitType === "unequal" && amount) {
+      const unequalSum = Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0);
+      if (Math.abs(unequalSum - parsedAmt) > 0.01) errors.splits = `Amounts must sum to ${parsedAmt.toFixed(2)} (currently ${unequalSum.toFixed(2)}).`;
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+    setFormErrors({});
 
     // Build splits payload based on split type
     let splits: object[];
@@ -237,6 +268,45 @@ export default function GroupDetails() {
       });
       const data = await res.json();
       setDrilldownData(data);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteExpense = async (expenseId: string, description: string) => {
+    if (!window.confirm(`Delete "${description}"? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`http://localhost:3001/expenses/${expenseId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      });
+      if (!res.ok) throw new Error("Failed to delete expense");
+      loadAll();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleEditExpense = async (expenseId: string) => {
+    try {
+      const res = await fetch(`http://localhost:3001/expenses/${expenseId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({
+          description: editDesc || undefined,
+          amountOriginal: editAmount ? parseFloat(editAmount) : undefined,
+          notes: editNotes || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error?.message || "Failed to update expense");
+      }
+      setEditingExpenseId(null);
+      loadAll();
     } catch (err: any) {
       setError(err.message);
     }
@@ -409,28 +479,114 @@ export default function GroupDetails() {
                           Paid by {e.paidBy?.name} on {new Date(e.date).toLocaleDateString()}
                         </div>
                       </div>
-                      <div style={{ textAlign: "right" }}>
+                      <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.4rem" }}>
                         <span style={{ fontSize: "1.1rem", fontWeight: "bold" }}>
-                          {e.amountOriginalCurrency === "USD" ? `$${e.amountOriginal}` : `₹${e.amountOriginal}`}
+                          {e.amountOriginalCurrency === "USD" ? `$${e.amountOriginal}` : `\u20b9${e.amountOriginal}`}
                         </span>
                         {e.amountOriginalCurrency === "USD" && (
                           <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                            (₹{parseFloat(e.convertedAmountInr).toFixed(2)})
+                            (\u20b9{parseFloat(e.convertedAmountInr).toFixed(2)})
                           </div>
                         )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              setEditingExpenseId(e.id);
+                              setEditDesc(e.description);
+                              setEditAmount(String(e.amountOriginal));
+                              setEditNotes(e.notes || "");
+                            }}
+                            style={{
+                              background: "rgba(99,102,241,0.2)",
+                              border: "1px solid var(--color-primary)",
+                              color: "white",
+                              padding: "0.25rem 0.6rem",
+                              borderRadius: "var(--radius-sm)",
+                              cursor: "pointer",
+                              fontSize: "0.78rem"
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteExpense(e.id, e.description)}
+                            style={{
+                              background: "rgba(239,68,68,0.15)",
+                              border: "1px solid var(--color-danger)",
+                              color: "var(--color-danger)",
+                              padding: "0.25rem 0.6rem",
+                              borderRadius: "var(--radius-sm)",
+                              cursor: "pointer",
+                              fontSize: "0.78rem"
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     </div>
-                    {/* Splits breakdown for Rohan */}
+                    {/* Splits breakdown */}
                     <div style={{ marginTop: "0.8rem", paddingLeft: "1rem", borderLeft: "2px dashed var(--panel-border)" }}>
                       <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Splits:</span>
                       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.4rem", marginTop: "0.2rem" }}>
-                        {e.splits.map((s, idx) => (
+                        {e.splits.map((s: any, idx: number) => (
                           <div key={idx} style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-                            {s.user?.name || s.guest?.name}: <span style={{ color: "white" }}>₹{parseFloat(s.owedAmount).toFixed(2)}</span>
+                            {s.user?.name || s.guest?.name}: <span style={{ color: "white" }}>\u20b9{parseFloat(s.owedAmount).toFixed(2)}</span>
                           </div>
                         ))}
                       </div>
                     </div>
+                    {/* Inline edit form */}
+                    {editingExpenseId === e.id && (
+                      <div style={{
+                        marginTop: "1rem",
+                        padding: "0.75rem",
+                        background: "rgba(99,102,241,0.07)",
+                        border: "1px solid var(--color-primary)",
+                        borderRadius: "var(--radius-sm)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.5rem"
+                      }}>
+                        <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Edit Expense</span>
+                        <input
+                          type="text"
+                          value={editDesc}
+                          onChange={(ev) => setEditDesc(ev.target.value)}
+                          placeholder="Description"
+                          style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--panel-border)", color: "white", padding: "0.4rem" }}
+                        />
+                        <input
+                          type="number"
+                          value={editAmount}
+                          onChange={(ev) => setEditAmount(ev.target.value)}
+                          placeholder="Amount"
+                          step="0.01"
+                          style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--panel-border)", color: "white", padding: "0.4rem" }}
+                        />
+                        <input
+                          type="text"
+                          value={editNotes}
+                          onChange={(ev) => setEditNotes(ev.target.value)}
+                          placeholder="Notes (optional)"
+                          style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--panel-border)", color: "white", padding: "0.4rem" }}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleEditExpense(e.id)}
+                            style={{ background: "var(--color-primary)", border: "none", color: "white", padding: "0.4rem 0.8rem", borderRadius: "var(--radius-sm)", cursor: "pointer", fontSize: "0.85rem" }}
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => setEditingExpenseId(null)}
+                            style={{ background: "transparent", border: "1px solid var(--panel-border)", color: "var(--text-secondary)", padding: "0.4rem 0.8rem", borderRadius: "var(--radius-sm)", cursor: "pointer", fontSize: "0.85rem" }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -579,67 +735,73 @@ export default function GroupDetails() {
           <div className="card">
             <h3>Add Expense</h3>
             <form onSubmit={handleCreateExpense} className="flex flex-col gap-3" style={{ marginTop: "1rem" }}>
-              <input
-                type="text"
-                placeholder="Description"
-                value={desc}
-                onChange={(e) => setDesc(e.target.value)}
-                required
-                style={{
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--panel-border)",
-                  color: "white",
-                  padding: "0.5rem"
-                }}
-              />
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-1">
                 <input
-                  type="number"
-                  placeholder="Amount"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  required
+                  type="text"
+                  placeholder="Description"
+                  value={desc}
+                  onChange={(e) => { setDesc(e.target.value); setFormErrors((prev) => ({ ...prev, desc: "" })); }}
                   style={{
-                    flex: 1,
-                    background: "rgba(0,0,0,0.2)",
-                    border: "1px solid var(--panel-border)",
+                    background: formErrors.desc ? "rgba(239,68,68,0.08)" : "rgba(0,0,0,0.2)",
+                    border: `1px solid ${formErrors.desc ? "var(--color-danger)" : "var(--panel-border)"}`,
                     color: "white",
                     padding: "0.5rem"
                   }}
                 />
+                {formErrors.desc && <span style={{ color: "var(--color-danger)", fontSize: "0.78rem" }}>{formErrors.desc}</span>}
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    placeholder="Amount"
+                    value={amount}
+                    onChange={(e) => { setAmount(e.target.value); setFormErrors((prev) => ({ ...prev, amount: "" })); }}
+                    style={{
+                      flex: 1,
+                      background: formErrors.amount ? "rgba(239,68,68,0.08)" : "rgba(0,0,0,0.2)",
+                      border: `1px solid ${formErrors.amount ? "var(--color-danger)" : "var(--panel-border)"}`,
+                      color: "white",
+                      padding: "0.5rem"
+                    }}
+                  />
+                  <select
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value)}
+                    style={{
+                      background: "rgba(0,0,0,0.2)",
+                      border: "1px solid var(--panel-border)",
+                      color: "white",
+                      padding: "0.5rem"
+                    }}
+                  >
+                    <option value="INR">INR</option>
+                    <option value="USD">USD</option>
+                  </select>
+                </div>
+                {formErrors.amount && <span style={{ color: "var(--color-danger)", fontSize: "0.78rem" }}>{formErrors.amount}</span>}
+              </div>
+              <div className="flex flex-col gap-1">
                 <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
+                  value={paidBy}
+                  onChange={(e) => { setPaidBy(e.target.value); setFormErrors((prev) => ({ ...prev, paidBy: "" })); }}
                   style={{
-                    background: "rgba(0,0,0,0.2)",
-                    border: "1px solid var(--panel-border)",
+                    background: formErrors.paidBy ? "rgba(239,68,68,0.08)" : "rgba(0,0,0,0.2)",
+                    border: `1px solid ${formErrors.paidBy ? "var(--color-danger)" : "var(--panel-border)"}`,
                     color: "white",
                     padding: "0.5rem"
                   }}
                 >
-                  <option value="INR">INR</option>
-                  <option value="USD">USD</option>
+                  <option value="">Paid By...</option>
+                  {group.members.map((m: any) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
                 </select>
+                {formErrors.paidBy && <span style={{ color: "var(--color-danger)", fontSize: "0.78rem" }}>{formErrors.paidBy}</span>}
               </div>
               <select
-                value={paidBy}
-                onChange={(e) => setPaidBy(e.target.value)}
-                required
-                style={{
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--panel-border)",
-                  color: "white",
-                  padding: "0.5rem"
-                }}
-              >
-                <option value="">Paid By...</option>
-                {group.members.map((m: any) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-              <select
                 value={splitType}
-                onChange={(e) => setSplitType(e.target.value)}
+                onChange={(e) => { setSplitType(e.target.value); setFormErrors((prev) => ({ ...prev, splits: "" })); }}
                 style={{
                   background: "rgba(0,0,0,0.2)",
                   border: "1px solid var(--panel-border)",
@@ -690,7 +852,7 @@ export default function GroupDetails() {
                         min="0"
                         placeholder={splitType === "share" ? "1" : "0"}
                         value={splitDetails[m.id] ?? ""}
-                        onChange={(e) => setSplitDetails((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                        onChange={(e) => { setSplitDetails((prev) => ({ ...prev, [m.id]: e.target.value })); setFormErrors((prev) => ({ ...prev, splits: "" })); }}
                         style={{
                           width: "100px",
                           background: "rgba(0,0,0,0.2)",
@@ -709,10 +871,10 @@ export default function GroupDetails() {
                       fontSize: "0.8rem",
                       color: Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - 100) < 0.01
                         ? "var(--color-success)"
-                        : "var(--color-warning)"
+                        : "var(--color-danger)"
                     }}>
                       Total: {Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0).toFixed(1)}%
-                      {Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - 100) < 0.01 ? " (valid)" : " (must equal 100%)"}
+                      {Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - 100) < 0.01 ? " ✓" : " — must equal 100%"}
                     </span>
                   )}
                   {splitType === "unequal" && (
@@ -720,27 +882,33 @@ export default function GroupDetails() {
                       fontSize: "0.8rem",
                       color: amount && Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - parseFloat(amount)) < 0.01
                         ? "var(--color-success)"
-                        : "var(--color-warning)"
+                        : "var(--color-danger)"
                     }}>
                       Total: {Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0).toFixed(2)}
                       {amount ? ` / ${parseFloat(amount).toFixed(2)}` : ""}
+                      {amount && Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - parseFloat(amount)) < 0.01 ? " ✓" : " — must match total"}
                     </span>
                   )}
                 </div>
               )}
+              {formErrors.splits && (
+                <span style={{ color: "var(--color-danger)", fontSize: "0.78rem" }}>{formErrors.splits}</span>
+              )}
 
-              <input
-                type="date"
-                value={expenseDate}
-                onChange={(e) => setExpenseDate(e.target.value)}
-                required
-                style={{
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--panel-border)",
-                  color: "white",
-                  padding: "0.5rem"
-                }}
-              />
+              <div className="flex flex-col gap-1">
+                <input
+                  type="date"
+                  value={expenseDate}
+                  onChange={(e) => { setExpenseDate(e.target.value); setFormErrors((prev) => ({ ...prev, expenseDate: "" })); }}
+                  style={{
+                    background: formErrors.expenseDate ? "rgba(239,68,68,0.08)" : "rgba(0,0,0,0.2)",
+                    border: `1px solid ${formErrors.expenseDate ? "var(--color-danger)" : "var(--panel-border)"}`,
+                    color: "white",
+                    padding: "0.5rem"
+                  }}
+                />
+                {formErrors.expenseDate && <span style={{ color: "var(--color-danger)", fontSize: "0.78rem" }}>{formErrors.expenseDate}</span>}
+              </div>
               <button
                 type="submit"
                 style={{
