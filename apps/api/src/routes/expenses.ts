@@ -158,7 +158,7 @@ router.post("/", isAuthenticated, async (req: AuthRequest, res: Response) => {
       // Insert splits
       const splitPromises = calculatedSplits.map((cs) => {
         // Compute INR equivalent share
-        const ratio = Number(amountOriginal) > 0 ? cs.owedAmount / Number(amountOriginal) : 0;
+        const ratio = Number(amountOriginal) !== 0 ? cs.owedAmount / Number(amountOriginal) : 0;
         const owedAmountInr = convertedAmountInr * ratio;
 
         return tx.expenseSplit.create({

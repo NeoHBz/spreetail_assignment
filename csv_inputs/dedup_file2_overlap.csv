@@ -1,0 +1,7 @@
+date,description,paid_by,amount,currency,split_type,split_with,split_details,notes
+2026-05-03,Groceries BigBasket,Priya,2400,INR,equal,"Aisha;Rohan;Priya",,exact repeat of file1 row -> cross_import_duplicate
+2026-05-28,Rent,Aisha,48000,INR,equal,"Aisha;Rohan;Priya",,still May (already booked) -> recurring_period_duplicate
+2026-06-01,Rent,Aisha,48000,INR,equal,"Aisha;Rohan;Priya",,new month June -> imports clean (NOT flagged)
+2026-06-05,Wifi bill,Rohan,1249,INR,equal,"Aisha;Rohan;Priya",,new month June -> imports clean (NOT flagged)
+2026-05-14,Dinner at Marina Bites,Priya,3200,INR,equal,"Aisha;Rohan;Priya",,2 days after file1 dinner -> possible_double_entry
+2026-06-08,Movie night snacks,Aisha,700,INR,equal,"Aisha;Rohan;Priya",,brand new expense -> imports clean

@@ -85,6 +85,8 @@ interface UserBreakdown {
   receivedSettlements: any[];
 }
 
+const todayStr = () => new Date().toISOString().split("T")[0];
+
 export default function GroupDetails() {
   const { id } = useParams<{ id: string }>();
   const [group, setGroup] = useState<any>(null);
@@ -92,13 +94,13 @@ export default function GroupDetails() {
 
   const [balances, setBalances] = useState<any[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [asOfDate, setAsOfDate] = useState("");
+  const [asOfDate, setAsOfDate] = useState(todayStr);
   const [selectedDrilldownUser, setSelectedDrilldownUser] = useState<string | null>(null);
   const [drilldownData, setDrilldownData] = useState<UserBreakdown | null>(null);
 
   // Forms
   const [memberEmail, setMemberEmail] = useState("");
-  const [memberJoinDate, setMemberJoinDate] = useState("");
+  const [memberJoinDate, setMemberJoinDate] = useState(todayStr);
 
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
@@ -106,7 +108,7 @@ export default function GroupDetails() {
   const [splitType, setSplitType] = useState("equal");
   const [splitDetails, setSplitDetails] = useState<Record<string, string>>({}); // userId -> amount/pct/weight string
   const [paidBy, setPaidBy] = useState("");
-  const [expenseDate, setExpenseDate] = useState("");
+  const [expenseDate, setExpenseDate] = useState(todayStr);
 
   // Transiently highlighted expense — set when a cross-import-duplicate card in the
   // ImportPanel asks to point at its matching ledger entry. Cleared after a short delay.
@@ -126,7 +128,7 @@ export default function GroupDetails() {
   const [setFrom, setSetFrom] = useState("");
   const [setTo, setSetTo] = useState("");
   const [setAmountVal, setSetAmountVal] = useState("");
-  const [setDateVal, setSetDateVal] = useState("");
+  const [setDateVal, setSetDateVal] = useState(todayStr);
   const [settlementCurrency, setSettlementCurrency] = useState("INR");
 
   // FX rates (INR-based, keyed by currency code)
@@ -213,7 +215,7 @@ export default function GroupDetails() {
       });
       if (!res.ok) throw new Error("Failed to add member");
       setMemberEmail("");
-      setMemberJoinDate("");
+      setMemberJoinDate(todayStr());
       loadAll();
     } catch (err: any) {
       setError(err.message);
@@ -236,7 +238,7 @@ export default function GroupDetails() {
     // Inline validation
     if (!desc.trim()) errors.desc = "Description is required.";
     const parsedAmt = parseFloat(amount);
-    if (!amount || isNaN(parsedAmt) || parsedAmt <= 0) errors.amount = "Enter a valid positive amount.";
+    if (!amount || isNaN(parsedAmt) || parsedAmt === 0) errors.amount = "Enter a valid non-zero amount.";
     if (!paidBy) errors.paidBy = "Select who paid.";
     if (!expenseDate) errors.expenseDate = "Select an expense date.";
 
@@ -302,7 +304,7 @@ export default function GroupDetails() {
       setDesc("");
       setAmount("");
       setPaidBy("");
-      setExpenseDate("");
+      setExpenseDate(todayStr());
       setSplitDetails({});
       setSplitType("equal");
       setShowExpenseModal(false);
@@ -334,7 +336,7 @@ export default function GroupDetails() {
       setSetFrom("");
       setSetTo("");
       setSetAmountVal("");
-      setSetDateVal("");
+      setSetDateVal(todayStr());
       setSettlementCurrency("INR");
       setShowSettlementModal(false);
       loadAll();
@@ -891,7 +893,6 @@ export default function GroupDetails() {
                     <input
                       type="number"
                       step="0.01"
-                      min="0"
                       placeholder={splitType === "share" ? "1" : "0"}
                       value={splitDetails[m.id] ?? ""}
                       onChange={(e) => { setSplitDetails((prev) => ({ ...prev, [m.id]: e.target.value })); setFormErrors((prev) => ({ ...prev, splits: "" })); }}

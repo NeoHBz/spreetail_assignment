@@ -1,0 +1,5 @@
+date,description,paid_by,amount,currency,split_type,split_with,split_details,notes
+2026-05-01,Rent,Aisha,48000,INR,equal,"Aisha;Rohan;Priya",,May rent
+2026-05-03,Groceries BigBasket,Priya,2400,INR,equal,"Aisha;Rohan;Priya",,
+2026-05-05,Wifi bill,Rohan,1199,INR,equal,"Aisha;Rohan;Priya",,May wifi
+2026-05-12,Dinner at Marina Bites,Priya,3200,INR,equal,"Aisha;Rohan;Priya",,
