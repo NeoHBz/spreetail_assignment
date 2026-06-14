@@ -430,7 +430,7 @@ export default function GroupDetails() {
             type="date"
             value={asOfDate}
             onChange={(e) => setAsOfDate(e.target.value)}
-            className="w-auto bg-slate-800/70 border-white/[0.08] text-white"
+            className="w-auto bg-slate-800/70 border-white/8 text-white"
           />
         </div>
       </div>
@@ -452,7 +452,7 @@ export default function GroupDetails() {
             <h3 className="text-slate-100 font-semibold mb-4">Group Members</h3>
             <div className="flex flex-col gap-2">
               {group.members.map((m: Member) => (
-                <div key={m.id} className="flex justify-between items-center p-2 rounded-md bg-white/[0.02]">
+                <div key={m.id} className="flex justify-between items-center p-2 rounded-md bg-white/2">
                   <div>
                     <strong className="text-slate-100">{m.name}</strong>
                     <span className="text-xs text-slate-500 ml-2">({m.email})</span>
@@ -483,14 +483,14 @@ export default function GroupDetails() {
                 value={memberEmail}
                 onChange={(e) => setMemberEmail(e.target.value)}
                 required
-                className="flex-1 bg-black/20 border-white/[0.08] text-white"
+                className="flex-1 bg-black/20 border-white/8 text-white"
               />
               <Input
                 type="date"
                 value={memberJoinDate}
                 onChange={(e) => setMemberJoinDate(e.target.value)}
                 required
-                className="w-auto bg-black/20 border-white/[0.08] text-white"
+                className="w-auto bg-black/20 border-white/8 text-white"
               />
               <Button type="submit" size="sm">Add Member</Button>
             </form>
@@ -514,7 +514,7 @@ export default function GroupDetails() {
                 <p className="text-slate-500 text-sm">No expenses recorded yet.</p>
               ) : (
                 expenses.map((e) => (
-                  <div key={e.id} className="py-4 border-b border-white/[0.08] last:border-0">
+                  <div key={e.id} className="py-4 border-b border-white/8 last:border-0">
                     <div className="flex justify-between items-start gap-4">
                       <div className="flex-1 min-w-0">
                         <strong className="text-[0.95rem] block mb-1 text-slate-100">{e.description}</strong>
@@ -563,7 +563,7 @@ export default function GroupDetails() {
                     </div>
 
                     {/* Splits breakdown */}
-                    <div className="mt-1.5 pl-3 pt-2 pb-1 border-l-2 border-white/[0.08] flex flex-wrap gap-1.5">
+                    <div className="mt-1.5 pl-3 pt-2 pb-1 border-l-2 border-white/8 flex flex-wrap gap-1.5">
                       {e.splits.map((s: any, idx: number) => (
                         <span key={idx} className="split-chip">
                           {s.user?.name || s.guest?.name}
@@ -575,14 +575,14 @@ export default function GroupDetails() {
 
                     {/* Inline edit form */}
                     {editingExpenseId === e.id && (
-                      <div className="mt-3 p-3 bg-indigo-500/[0.06] border border-indigo-500/25 rounded-md flex flex-col gap-2">
+                      <div className="mt-3 p-3 bg-indigo-500/6 border border-indigo-500/25 rounded-md flex flex-col gap-2">
                         <span className="text-[0.72rem] text-slate-500 uppercase tracking-wide font-bold">Edit Expense</span>
                         <Input
                           type="text"
                           value={editDesc}
                           onChange={(ev) => setEditDesc(ev.target.value)}
                           placeholder="Description"
-                          className="bg-black/20 border-white/[0.08] text-white"
+                          className="bg-black/20 border-white/8 text-white"
                         />
                         <Input
                           type="number"
@@ -590,14 +590,14 @@ export default function GroupDetails() {
                           onChange={(ev) => setEditAmount(ev.target.value)}
                           placeholder="Amount"
                           step="0.01"
-                          className="bg-black/20 border-white/[0.08] text-white"
+                          className="bg-black/20 border-white/8 text-white"
                         />
                         <Input
                           type="text"
                           value={editNotes}
                           onChange={(ev) => setEditNotes(ev.target.value)}
                           placeholder="Notes (optional)"
-                          className="bg-black/20 border-white/[0.08] text-white"
+                          className="bg-black/20 border-white/8 text-white"
                         />
                         <div className="flex gap-2">
                           <Button size="sm" onClick={() => handleEditExpense(e.id)}>Save</Button>
@@ -627,7 +627,7 @@ export default function GroupDetails() {
                   className={`flex justify-between items-center p-3 rounded-md cursor-pointer border transition-colors ${
                     selectedDrilldownUser === b.userId
                       ? "bg-indigo-500/15 border-indigo-500"
-                      : "bg-white/[0.02] border-transparent hover:bg-white/[0.04]"
+                      : "bg-white/2 border-transparent hover:bg-white/4"
                   }`}
                 >
                   <span className="text-slate-100">{b.name}</span>
@@ -662,7 +662,7 @@ export default function GroupDetails() {
                 <p className="text-emerald-400 text-sm">Everyone is settled up!</p>
               ) : (
                 suggestions.map((s, idx) => (
-                  <div key={idx} className="p-3 bg-emerald-500/[0.05] border border-emerald-500/20 rounded-md text-sm">
+                  <div key={idx} className="p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-md text-sm">
                     <span className="text-slate-100"><strong>{s.fromUserName}</strong> pays <strong>{s.toUserName}</strong></span>
                     <div className="text-[1.05rem] font-bold text-emerald-400 mt-1">
                       {fmtCurrency(s.amount)}
@@ -680,26 +680,26 @@ export default function GroupDetails() {
       {/* ── Modals ── */}
 
       <Dialog open={showSettlementModal} onOpenChange={setShowSettlementModal}>
-        <DialogContent className="bg-slate-900 border-white/[0.08] max-w-md">
+        <DialogContent className="bg-slate-900 border-white/8 max-w-md">
           <DialogHeader>
             <DialogTitle className="text-slate-100">Record Payment</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreateSettlement} className="flex flex-col gap-3">
             <Select value={setFrom} onValueChange={setSetFrom} required>
-              <SelectTrigger className="bg-black/20 border-white/[0.08] text-slate-100">
+              <SelectTrigger className="bg-black/20 border-white/8 text-slate-100">
                 <SelectValue placeholder="Who paid?" />
               </SelectTrigger>
-              <SelectContent className="bg-slate-900 border-white/[0.08]">
+              <SelectContent className="bg-slate-900 border-white/8">
                 {group.members.map((m: any) => (
                   <SelectItem key={m.id} value={m.id} className="text-slate-100">{m.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <Select value={setTo} onValueChange={setSetTo} required>
-              <SelectTrigger className="bg-black/20 border-white/[0.08] text-slate-100">
+              <SelectTrigger className="bg-black/20 border-white/8 text-slate-100">
                 <SelectValue placeholder="To whom?" />
               </SelectTrigger>
-              <SelectContent className="bg-slate-900 border-white/[0.08]">
+              <SelectContent className="bg-slate-900 border-white/8">
                 {group.members.map((m: any) => (
                   <SelectItem key={m.id} value={m.id} className="text-slate-100">{m.name}</SelectItem>
                 ))}
@@ -712,13 +712,13 @@ export default function GroupDetails() {
                 value={setAmountVal}
                 onChange={(e) => setSetAmountVal(e.target.value)}
                 required
-                className="flex-1 bg-black/20 border-white/[0.08] text-white"
+                className="flex-1 bg-black/20 border-white/8 text-white"
               />
               <Select value={settlementCurrency} onValueChange={setSettlementCurrency}>
-                <SelectTrigger className="w-32 bg-black/20 border-white/[0.08] text-slate-100">
+                <SelectTrigger className="w-32 bg-black/20 border-white/8 text-slate-100">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-slate-900 border-white/[0.08]">
+                <SelectContent className="bg-slate-900 border-white/8">
                   {CURRENCIES.map((c) => (
                     <SelectItem key={c.code} value={c.code} className="text-slate-100">{c.label}</SelectItem>
                   ))}
@@ -730,7 +730,7 @@ export default function GroupDetails() {
               value={setDateVal}
               onChange={(e) => setSetDateVal(e.target.value)}
               required
-              className="bg-black/20 border-white/[0.08] text-white"
+              className="bg-black/20 border-white/8 text-white"
             />
             <div className="flex gap-2 mt-1">
               <Button type="submit" className="flex-1 bg-emerald-500 hover:bg-emerald-600">Record Payment</Button>
@@ -741,7 +741,7 @@ export default function GroupDetails() {
       </Dialog>
 
       <Dialog open={showExpenseModal} onOpenChange={setShowExpenseModal}>
-        <DialogContent className="bg-slate-900 border-white/[0.08] max-w-[460px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="bg-slate-900 border-white/8 max-w-[460px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-slate-100">Add Expense</DialogTitle>
           </DialogHeader>
@@ -752,7 +752,7 @@ export default function GroupDetails() {
                 placeholder="Description"
                 value={desc}
                 onChange={(e) => { setDesc(e.target.value); setFormErrors((prev) => ({ ...prev, desc: "" })); }}
-                className={`bg-black/20 border-white/[0.08] text-white ${formErrors.desc ? "border-red-500/60 bg-red-500/[0.08]" : ""}`}
+                className={`bg-black/20 border-white/8 text-white ${formErrors.desc ? "border-red-500/60 bg-red-500/8" : ""}`}
               />
               {formErrors.desc && <span className="text-red-400 text-[0.78rem]">{formErrors.desc}</span>}
             </div>
@@ -763,13 +763,13 @@ export default function GroupDetails() {
                   placeholder="Amount"
                   value={amount}
                   onChange={(e) => { setAmount(e.target.value); setFormErrors((prev) => ({ ...prev, amount: "" })); }}
-                  className={`flex-1 bg-black/20 border-white/[0.08] text-white ${formErrors.amount ? "border-red-500/60 bg-red-500/[0.08]" : ""}`}
+                  className={`flex-1 bg-black/20 border-white/8 text-white ${formErrors.amount ? "border-red-500/60 bg-red-500/8" : ""}`}
                 />
                 <Select value={currency} onValueChange={setCurrency}>
-                  <SelectTrigger className="w-32 bg-black/20 border-white/[0.08] text-slate-100">
+                  <SelectTrigger className="w-32 bg-black/20 border-white/8 text-slate-100">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="bg-slate-900 border-white/[0.08]">
+                  <SelectContent className="bg-slate-900 border-white/8">
                     {CURRENCIES.map((c) => (
                       <SelectItem key={c.code} value={c.code} className="text-slate-100">{c.label}</SelectItem>
                     ))}
@@ -785,10 +785,10 @@ export default function GroupDetails() {
             </div>
             <div className="flex flex-col gap-1">
               <Select value={paidBy} onValueChange={(v) => { setPaidBy(v); setFormErrors((prev) => ({ ...prev, paidBy: "" })); }}>
-                <SelectTrigger className={`bg-black/20 border-white/[0.08] text-slate-100 ${formErrors.paidBy ? "border-red-500/60" : ""}`}>
+                <SelectTrigger className={`bg-black/20 border-white/8 text-slate-100 ${formErrors.paidBy ? "border-red-500/60" : ""}`}>
                   <SelectValue placeholder="Paid By..." />
                 </SelectTrigger>
-                <SelectContent className="bg-slate-900 border-white/[0.08]">
+                <SelectContent className="bg-slate-900 border-white/8">
                   {group.members.map((m: any) => (
                     <SelectItem key={m.id} value={m.id} className="text-slate-100">{m.name}</SelectItem>
                   ))}
@@ -797,10 +797,10 @@ export default function GroupDetails() {
               {formErrors.paidBy && <span className="text-red-400 text-[0.78rem]">{formErrors.paidBy}</span>}
             </div>
             <Select value={splitType} onValueChange={(v) => { setSplitType(v); setFormErrors((prev) => ({ ...prev, splits: "" })); }}>
-              <SelectTrigger className="bg-black/20 border-white/[0.08] text-slate-100">
+              <SelectTrigger className="bg-black/20 border-white/8 text-slate-100">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-slate-900 border-white/[0.08]">
+              <SelectContent className="bg-slate-900 border-white/8">
                 <SelectItem value="equal" className="text-slate-100">Equal</SelectItem>
                 <SelectItem value="unequal" className="text-slate-100">Unequal</SelectItem>
                 <SelectItem value="percentage" className="text-slate-100">Percentage</SelectItem>
@@ -815,7 +815,7 @@ export default function GroupDetails() {
               const left = m.leftAt ? new Date(m.leftAt) : null;
               return d >= joined && (!left || d <= left);
             }).length > 0 && (
-              <div className="bg-black/15 border border-white/[0.08] rounded-md p-3 flex flex-col gap-2">
+              <div className="bg-black/15 border border-white/8 rounded-md p-3 flex flex-col gap-2">
                 <span className="text-[0.8rem] text-slate-500 uppercase">
                   {splitType === "unequal" && "Per-person amount (INR)"}
                   {splitType === "percentage" && "Per-person percentage (must sum to 100%)"}
@@ -837,7 +837,7 @@ export default function GroupDetails() {
                       placeholder={splitType === "share" ? "1" : "0"}
                       value={splitDetails[m.id] ?? ""}
                       onChange={(e) => { setSplitDetails((prev) => ({ ...prev, [m.id]: e.target.value })); setFormErrors((prev) => ({ ...prev, splits: "" })); }}
-                      className="w-24 bg-black/20 border border-white/[0.08] text-white px-2 py-1 rounded text-sm outline-none"
+                      className="w-24 bg-black/20 border border-white/8 text-white px-2 py-1 rounded text-sm outline-none"
                     />
                     {splitType === "percentage" && <span className="text-slate-500 text-sm">%</span>}
                   </div>
@@ -864,7 +864,7 @@ export default function GroupDetails() {
                 type="date"
                 value={expenseDate}
                 onChange={(e) => { setExpenseDate(e.target.value); setFormErrors((prev) => ({ ...prev, expenseDate: "" })); }}
-                className={`bg-black/20 border-white/[0.08] text-white ${formErrors.expenseDate ? "border-red-500/60 bg-red-500/[0.08]" : ""}`}
+                className={`bg-black/20 border-white/8 text-white ${formErrors.expenseDate ? "border-red-500/60 bg-red-500/8" : ""}`}
               />
               {formErrors.expenseDate && <span className="text-red-400 text-[0.78rem]">{formErrors.expenseDate}</span>}
             </div>
@@ -879,7 +879,7 @@ export default function GroupDetails() {
       {/* Drilldown Panel */}
       {selectedDrilldownUser && drilldownData && (
         <div className="glass-card animate-fade-in mt-8">
-          <div className="flex justify-between items-center border-b border-white/[0.08] pb-4 mb-4">
+          <div className="flex justify-between items-center border-b border-white/8 pb-4 mb-4">
             <h3 className="text-slate-100 font-semibold">Drilldown Breakdown: {group.members.find((m: any) => m.id === selectedDrilldownUser)?.name}</h3>
             <Button variant="ghost" size="sm" onClick={() => setSelectedDrilldownUser(null)}>Close</Button>
           </div>
@@ -889,13 +889,13 @@ export default function GroupDetails() {
               <h4 className="text-emerald-400 font-medium mb-2">Payments Made (Increases balance)</h4>
               <div className="flex flex-col gap-2">
                 {drilldownData.paidExpenses.map((exp: any) => (
-                  <div key={exp.id} className="text-[0.85rem] px-2 py-1.5 bg-emerald-500/[0.04] rounded flex justify-between gap-2">
+                  <div key={exp.id} className="text-[0.85rem] px-2 py-1.5 bg-emerald-500/4 rounded flex justify-between gap-2">
                     <span className="text-slate-400">{exp.description} <span className="text-slate-500">· {fmtDate(exp.date)}</span></span>
                     <strong className="text-emerald-400 shrink-0">+{fmtCurrency(exp.convertedAmountInr)}</strong>
                   </div>
                 ))}
                 {drilldownData.sentSettlements.map((set: any) => (
-                  <div key={set.id} className="text-[0.85rem] px-2 py-1.5 bg-emerald-500/[0.04] rounded flex justify-between gap-2">
+                  <div key={set.id} className="text-[0.85rem] px-2 py-1.5 bg-emerald-500/4 rounded flex justify-between gap-2">
                     <span className="text-slate-400">Settlement → {set.toUser.name} <span className="text-slate-500">· {fmtDate(set.date)}</span></span>
                     <strong className="text-emerald-400 shrink-0">+{fmtCurrency(set.amount)}</strong>
                   </div>
@@ -907,13 +907,13 @@ export default function GroupDetails() {
               <h4 className="text-red-400 font-medium mb-2">Debts Owed (Decreases balance)</h4>
               <div className="flex flex-col gap-2">
                 {drilldownData.owedSplits.map((split: any) => (
-                  <div key={split.id} className="text-[0.85rem] px-2 py-1.5 bg-red-500/[0.04] rounded flex justify-between gap-2">
+                  <div key={split.id} className="text-[0.85rem] px-2 py-1.5 bg-red-500/4 rounded flex justify-between gap-2">
                     <span className="text-slate-400">{split.expense.description} <span className="text-slate-500">· paid by {split.expense.paidBy.name}</span></span>
                     <strong className="text-red-400 shrink-0">−{fmtCurrency(split.owedAmount)}</strong>
                   </div>
                 ))}
                 {drilldownData.receivedSettlements.map((set: any) => (
-                  <div key={set.id} className="text-[0.85rem] px-2 py-1.5 bg-red-500/[0.04] rounded flex justify-between gap-2">
+                  <div key={set.id} className="text-[0.85rem] px-2 py-1.5 bg-red-500/4 rounded flex justify-between gap-2">
                     <span className="text-slate-400">Settlement from {set.fromUser.name} <span className="text-slate-500">· {fmtDate(set.date)}</span></span>
                     <strong className="text-red-400 shrink-0">−{fmtCurrency(set.amount)}</strong>
                   </div>

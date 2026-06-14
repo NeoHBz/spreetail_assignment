@@ -24,6 +24,8 @@ function isMemberActive(member: any, date: Date) {
   return date >= joined && (!left || date <= left);
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 // Stage 1: Parse and Detect Anomalies
 router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthRequest, res: Response) => {
   const { groupId } = req.body;
@@ -235,16 +237,23 @@ router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthR
               // check ambiguity e.g. 04/05/2026
               if (first <= 12 && second <= 12 && first !== second) {
                 dateAmbiguous = true;
-                // Defaulting to DD/MM/YYYY matching the primary list style
-                dateObj = new Date(year, second - 1, first);
+                // DD/MM/YYYY → first is the day, second is the month
+                // MM/DD/YYYY → first is the month, second is the day
+                const ddmm = new Date(year, second - 1, first);
+                const mmdd = new Date(year, first - 1, second);
+                const fmt = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+                // Default to DD/MM/YYYY matching the primary list style; user confirms below.
+                // dateOptions[0] is always the DD/MM reading, [1] the MM/DD reading —
+                // the frontend's "treat all as DD/MM" / "MM/DD" bulk action relies on this order.
+                dateObj = ddmm;
                 rowAnomalies.push({
                   anomalyType: "ambiguous_date",
-                  description: `Date "${cleanedDateStr}" is ambiguous. Interpret as April 5th (DD/MM/YYYY) or May 4th (MM/DD/YYYY)?`,
+                  description: `Date "${cleanedDateStr}" is ambiguous: ${fmt(ddmm)} (DD/MM/YYYY) or ${fmt(mmdd)} (MM/DD/YYYY)?`,
                   resolution: "pending", // require user confirmation
                   editedValue: {
                     dateOptions: [
-                      { label: "April 5, 2026", value: new Date(year, 3, 5).toISOString() },
-                      { label: "May 4, 2026", value: new Date(year, 4, 4).toISOString() },
+                      { label: `${fmt(ddmm)} · DD/MM`, value: ddmm.toISOString() },
+                      { label: `${fmt(mmdd)} · MM/DD`, value: mmdd.toISOString() },
                     ],
                   },
                 });
@@ -603,6 +612,18 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
           payerName = payerUser.name;
         }
 
+        // Explicit payer mapping override: when the user resolved a missing/unknown
+        // payer by mapping it to an existing member, use that member as the payer.
+        const payerMapAnom = rowAnoms.find(
+          (a) =>
+            (a.anomalyType === "unknown_payer" || a.anomalyType === "missing_payer") &&
+            (a.editedValue as any)?.mapToUserId
+        );
+        if (payerMapAnom) {
+          const mapped = allUsers.find((u) => u.id === (payerMapAnom.editedValue as any).mapToUserId);
+          if (mapped) payerUser = mapped;
+        }
+
         // Overrides from edits
         let dateStr = raw.date;
         const missingYear = rowAnoms.find((a) => a.anomalyType === "missing_year");
@@ -619,9 +640,27 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
           dateObj = new Date();
         }
 
-        // Payer user validation
+        // Payer user validation — never drop a row silently. If we still can't resolve
+        // a real payer, record an explicit rejection so the import report accounts for it.
         if (!payerUser) {
-          continue; // Payer invalid or skipped
+          await tx.importRow.update({ where: { id: row.id }, data: { status: "rejected" } });
+          continue;
+        }
+
+        // Add a non-member / visitor payer to the group as a member, when the user opted in.
+        // joinedAt is the expense date so this very expense falls inside their membership window.
+        const addMemberAnom = rowAnoms.find(
+          (a) =>
+            (a.anomalyType === "non_member_payer" || a.anomalyType === "visitor_payer") &&
+            a.resolution === "user_approved" &&
+            (a.editedValue as any)?.addAsMember
+        );
+        if (addMemberAnom) {
+          await tx.groupMembership.upsert({
+            where: { userId_groupId: { userId: payerUser.id, groupId: session.groupId } },
+            update: { leftAt: null },
+            create: { userId: payerUser.id, groupId: session.groupId, joinedAt: dateObj },
+          });
         }
 
         // Check if settlement candidate should be routed
@@ -656,9 +695,22 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
         let amountStr = raw.amount ? raw.amount.replace(/,/g, "").trim() : "0";
         let amount = parseFloat(amountStr);
 
-        const subPaisa = rowAnoms.find((a) => a.anomalyType === "sub_paisa_precision");
-        if (subPaisa && subPaisa.editedValue) {
-          amount = (subPaisa.editedValue as any).amount;
+        // Amount overrides: automatic (sub-paisa rounding) or a manual correction the user
+        // typed for a malformed / zero / comma-laden amount.
+        const amountOverrideAnom = rowAnoms.find(
+          (a) =>
+            ["sub_paisa_precision", "malformed_amount", "zero_amount", "whitespace_amount"].includes(a.anomalyType) &&
+            (a.editedValue as any)?.amount != null
+        );
+        if (amountOverrideAnom) {
+          amount = Number((amountOverrideAnom.editedValue as any).amount);
+        }
+
+        // Guard: an unparseable amount with no correction must not become a NaN expense
+        // (which would crash the whole transaction). Reject the row explicitly instead.
+        if (isNaN(amount)) {
+          await tx.importRow.update({ where: { id: row.id }, data: { status: "rejected" } });
+          continue;
         }
 
         let currency = raw.currency ? raw.currency.trim().toUpperCase() : "INR";

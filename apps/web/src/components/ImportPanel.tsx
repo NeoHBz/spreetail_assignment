@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -26,6 +26,12 @@ interface ImportSession {
   status: string;
   anomalies: Anomaly[];
   rows: ImportRow[];
+}
+
+interface Member {
+  id: string;
+  name: string;
+  email: string;
 }
 
 interface ImportPanelProps {
@@ -90,6 +96,10 @@ function formatCurrency(amount: string | number | null | undefined, currency = "
   if (isNaN(num)) return String(amount);
   const cfg = CURRENCY_SYMBOLS[currency] ?? CURRENCY_SYMBOLS["INR"];
   return `${cfg.symbol}${num.toLocaleString(cfg.locale, { minimumFractionDigits: cfg.decimals, maximumFractionDigits: cfg.decimals })}`;
+}
+
+function isValidAmount(v: string | undefined): boolean {
+  return v != null && v.trim() !== "" && Number.isFinite(Number(v));
 }
 
 function formatDate(dateStr: string | null | undefined): string {
@@ -187,7 +197,7 @@ function RowPreview({ rawRow, label, highlight = false }: RowPreviewProps) {
       )}
       <div className={highlight
         ? "bg-indigo-500/[0.07] border border-indigo-500/25 rounded-lg px-4 py-3"
-        : "bg-black/25 border border-white/[0.06] rounded-lg px-4 py-3"
+        : "bg-black/25 border border-white/6 rounded-lg px-4 py-3"
       }>
         <div className="font-semibold text-sm text-slate-100 mb-1 block">
           {rawRow.description || <span className="text-slate-500 italic">no description</span>}
@@ -233,6 +243,22 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
   const [activeFilter, setActiveFilter] = useState<"all" | "pending" | "auto_fixed" | "resolved">("all");
   // Track auto_fixed items the user has manually overridden to skip, so undo can restore to auto_fixed
   const [autoFixedSkipped, setAutoFixedSkipped] = useState<Set<string>>(new Set());
+  // Group members — used for the "map payer to existing member" dropdowns
+  const [members, setMembers] = useState<Member[]>([]);
+  // Per-card local input state (keyed by anomaly id, or by joined ids for clubbed cards)
+  const [payerMapSel, setPayerMapSel] = useState<Record<string, string>>({});
+  const [amountEdits, setAmountEdits] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    fetch(`http://localhost:3001/groups/${groupId}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((g) => { if (g?.members) setMembers(g.members.map((m: any) => ({ id: m.id, name: m.name, email: m.email }))); })
+      .catch(() => { /* dropdowns simply stay empty if members can't be loaded */ });
+  }, [groupId]);
+
+  const memberName = (id: string | undefined) => members.find((m) => m.id === id)?.name ?? "member";
 
   // ── API handlers ───────────────────────────────────────────────────────────────
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -356,6 +382,74 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
     }
   };
 
+  // Map an unknown / missing payer to a real member (single + bulk)
+  const handleMapPayer = (anomalyId: string, userId: string) =>
+    handleResolve(anomalyId, "user_approved", { mapToUserId: userId });
+  const handleMapPayerMany = (ids: string[], userId: string) =>
+    handleResolveMany(ids, "user_approved", { mapToUserId: userId });
+
+  // Add a non-member / visitor payer to the group as a member (single + bulk)
+  const handleAddAsMember = async (anomalyId: string) => {
+    await handleResolve(anomalyId, "user_approved", { addAsMember: true });
+    setAutoFixedSkipped((prev) => { const n = new Set(prev); n.delete(anomalyId); return n; });
+  };
+  const handleAddAsMemberMany = async (ids: string[]) => {
+    await handleResolveMany(ids, "user_approved", { addAsMember: true });
+    setAutoFixedSkipped((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n; });
+  };
+
+  // Apply a manually-typed amount correction, preserving any existing editedValue keys
+  const handleApplyAmount = (anom: Anomaly, value: string) => {
+    if (!isValidAmount(value)) return;
+    return handleResolve(anom.id, "user_approved", { ...(anom.editedValue ?? {}), amount: Number(value) });
+  };
+  const handleApplyAmountMany = (group: Anomaly[], value: string) => {
+    if (!isValidAmount(value)) return;
+    // Each anomaly keeps its own editedValue; only the amount is shared across the group
+    return Promise.all(
+      group.map((a) => patchAnomaly(a.id, "user_approved", { ...(a.editedValue ?? {}), amount: Number(value) }))
+    ).then(() => {
+      if (!session) return;
+      const ids = group.map((a) => a.id);
+      setSession({
+        ...session,
+        anomalies: session.anomalies.map((a) =>
+          ids.includes(a.id)
+            ? { ...a, resolution: "user_approved", editedValue: { ...(a.editedValue ?? {}), amount: Number(value) } }
+            : a
+        ),
+      });
+    }).catch((err: any) => setError(err.message));
+  };
+
+  // Apply one date interpretation to every pending ambiguous date at once.
+  // optionIndex 0 = DD/MM/YYYY reading, 1 = MM/DD/YYYY reading (order set by the backend).
+  const handleBulkAmbiguousDate = async (optionIndex: number) => {
+    if (!session) return;
+    const targets = session.anomalies.filter(
+      (a) => a.anomalyType === "ambiguous_date" && a.resolution === "pending" && a.editedValue?.dateOptions?.[optionIndex]
+    );
+    if (targets.length === 0) return;
+    try {
+      await Promise.all(
+        targets.map((a) =>
+          patchAnomaly(a.id, "user_approved", { ...a.editedValue, date: a.editedValue.dateOptions[optionIndex].value })
+        )
+      );
+      const ids = new Set(targets.map((a) => a.id));
+      setSession({
+        ...session,
+        anomalies: session.anomalies.map((a) =>
+          ids.has(a.id)
+            ? { ...a, resolution: "user_approved", editedValue: { ...a.editedValue, date: a.editedValue.dateOptions[optionIndex].value } }
+            : a
+        ),
+      });
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
   const handleCommit = async () => {
     if (!session) return;
     setLoading(true);
@@ -385,6 +479,9 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
   const approvedCount     = session?.anomalies.filter((a) => a.resolution === "user_approved").length ?? 0;
   const skippedCount      = session?.anomalies.filter((a) => a.resolution === "user_rejected").length ?? 0;
   const resolvedUserCount = approvedCount + skippedCount;
+  const ambiguousDatePending = session?.anomalies.filter(
+    (a) => a.anomalyType === "ambiguous_date" && a.resolution === "pending"
+  ) ?? [];
 
   const filteredAnomalies = session?.anomalies.filter((a) => {
     if (activeFilter === "pending")    return a.resolution === "pending";
@@ -443,7 +540,7 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
         {/* ── Card header: row number + type badge + status ── */}
         <div className="flex justify-between items-start gap-3 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="bg-slate-950/80 border border-white/[0.09] px-2 py-0.5 rounded text-[0.68rem] text-slate-500 font-mono font-bold tracking-wide">
+            <span className="bg-slate-950/80 border border-white/9 px-2 py-0.5 rounded text-[0.68rem] text-slate-500 font-mono font-bold tracking-wide">
               ROW {anom.rowNumber}
             </span>
             <span
@@ -471,7 +568,7 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
 
         {/* ── User-approved note ── */}
         {anom.resolution === "user_approved" && anom.resolutionNotes && (
-          <div className="bg-emerald-500/[0.06] border border-emerald-500/20 rounded-md px-3 py-2 text-sm text-emerald-300 flex gap-2 items-baseline">
+          <div className="bg-emerald-500/6 border border-emerald-500/20 rounded-md px-3 py-2 text-sm text-emerald-300 flex gap-2 items-baseline">
             <span className="text-slate-500 shrink-0">Decision:</span>
             <span className="font-bold">{anom.resolutionNotes}</span>
           </div>
@@ -568,12 +665,97 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                 </>
               )}
 
-              {!["exact_duplicate", "conflicting_duplicate", "settlement_candidate", "ambiguous_date", "invalid_percentage_sum"].includes(anom.anomalyType) && (
+              {/* missing / unknown payer → map to an existing member (importing as-is would
+                  silently drop the row, since an expense needs a real payer) */}
+              {(anom.anomalyType === "missing_payer" || anom.anomalyType === "unknown_payer") && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs text-slate-500">Map this payer to an existing member:</span>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <select
+                      value={payerMapSel[anom.id] ?? ""}
+                      onChange={(e) => setPayerMapSel((p) => ({ ...p, [anom.id]: e.target.value }))}
+                      className="bg-slate-950/60 border border-white/15 rounded-md px-2 py-1.5 text-sm text-slate-100"
+                    >
+                      <option value="">Select member…</option>
+                      {members.map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                    </select>
+                    <ActionBtn color="#10b981" disabled={!payerMapSel[anom.id]} onClick={() => handleMapPayer(anom.id, payerMapSel[anom.id])}>
+                      Map &amp; Import
+                    </ActionBtn>
+                    <ActionBtn color="#94a3b8" outline onClick={() => handleResolve(anom.id, "user_rejected")}>
+                      Skip This Row
+                    </ActionBtn>
+                  </div>
+                </div>
+              )}
+
+              {/* non-member payer → add to group, import as a one-off payer, or skip */}
+              {anom.anomalyType === "non_member_payer" && (
+                <div className="flex gap-2 flex-wrap items-center">
+                  <ActionBtn color="#6366f1" onClick={() => handleAddAsMember(anom.id)}>
+                    Add as Member
+                  </ActionBtn>
+                  <ActionBtn color="#10b981" outline onClick={() => handleResolve(anom.id, "user_approved")}>
+                    Import as One-off Payer
+                  </ActionBtn>
+                  <ActionBtn color="#94a3b8" outline onClick={() => handleResolve(anom.id, "user_rejected")}>
+                    Skip This Row
+                  </ActionBtn>
+                </div>
+              )}
+
+              {/* malformed amount → type the correct value, or skip */}
+              {anom.anomalyType === "malformed_amount" && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs text-slate-500">Enter the correct amount:</span>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <input
+                      type="number" step="0.01" placeholder="0.00"
+                      value={amountEdits[anom.id] ?? ""}
+                      onChange={(e) => setAmountEdits((p) => ({ ...p, [anom.id]: e.target.value }))}
+                      className="bg-slate-950/60 border border-white/15 rounded-md px-2 py-1.5 text-sm text-slate-100 w-32"
+                    />
+                    <ActionBtn color="#10b981" disabled={!isValidAmount(amountEdits[anom.id])} onClick={() => handleApplyAmount(anom, amountEdits[anom.id])}>
+                      Apply &amp; Import
+                    </ActionBtn>
+                    <ActionBtn color="#94a3b8" outline onClick={() => handleResolve(anom.id, "user_rejected")}>
+                      Skip This Row
+                    </ActionBtn>
+                  </div>
+                </div>
+              )}
+
+              {/* zero amount → keep as zero, correct it manually, or skip */}
+              {anom.anomalyType === "zero_amount" && (
+                <div className="flex flex-col gap-2">
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <ActionBtn color="#10b981" onClick={() => handleResolve(anom.id, "user_approved")}>
+                      Import as Zero
+                    </ActionBtn>
+                    <ActionBtn color="#94a3b8" outline onClick={() => handleResolve(anom.id, "user_rejected")}>
+                      Skip This Row
+                    </ActionBtn>
+                  </div>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <span className="text-xs text-slate-500">or set a corrected amount:</span>
+                    <input
+                      type="number" step="0.01" placeholder="0.00"
+                      value={amountEdits[anom.id] ?? ""}
+                      onChange={(e) => setAmountEdits((p) => ({ ...p, [anom.id]: e.target.value }))}
+                      className="bg-slate-950/60 border border-white/15 rounded-md px-2 py-1.5 text-sm text-slate-100 w-32"
+                    />
+                    <ActionBtn color="#6366f1" outline disabled={!isValidAmount(amountEdits[anom.id])} onClick={() => handleApplyAmount(anom, amountEdits[anom.id])}>
+                      Apply Correction
+                    </ActionBtn>
+                  </div>
+                </div>
+              )}
+
+              {/* generic fallback: invalid_date, inactive_member_payer, etc. */}
+              {!["exact_duplicate", "conflicting_duplicate", "settlement_candidate", "ambiguous_date", "invalid_percentage_sum", "missing_payer", "unknown_payer", "non_member_payer", "malformed_amount", "zero_amount"].includes(anom.anomalyType) && (
                 <>
                   <ActionBtn color="#10b981" onClick={() => handleResolve(anom.id, "user_approved")}>
-                    {anom.anomalyType === "zero_amount" ? "Import as Zero"
-                     : ["inactive_member_payer", "non_member_payer", "unknown_payer"].includes(anom.anomalyType) ? "Import Anyway"
-                     : "Import This Row"}
+                    {anom.anomalyType === "inactive_member_payer" ? "Import Anyway" : "Import This Row"}
                   </ActionBtn>
                   <ActionBtn color="#94a3b8" outline onClick={() => handleResolve(anom.id, "user_rejected")}>
                     Skip This Row
@@ -583,11 +765,34 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
             </div>
           )}
 
-          {/* Auto-fixed → show what was applied + override option */}
+          {/* Auto-fixed → show what was applied + override options */}
           {anom.resolution === "auto_fixed" && (
-            <ActionBtn color="#64748b" outline onClick={() => handleSkipAutoFixed(anom.id)}>
-              Override: Skip This Row Instead
-            </ActionBtn>
+            <div className="flex flex-col gap-2">
+              {(anom.anomalyType === "whitespace_amount" || anom.anomalyType === "sub_paisa_precision") && (
+                <div className="flex gap-2 flex-wrap items-center">
+                  <span className="text-xs text-slate-500">Prefer a different amount?</span>
+                  <input
+                    type="number" step="0.01" placeholder="override amount"
+                    value={amountEdits[anom.id] ?? ""}
+                    onChange={(e) => setAmountEdits((p) => ({ ...p, [anom.id]: e.target.value }))}
+                    className="bg-slate-950/60 border border-white/15 rounded-md px-2 py-1.5 text-sm text-slate-100 w-36"
+                  />
+                  <ActionBtn color="#6366f1" outline disabled={!isValidAmount(amountEdits[anom.id])} onClick={() => handleApplyAmount(anom, amountEdits[anom.id])}>
+                    Use This Value Instead
+                  </ActionBtn>
+                </div>
+              )}
+              <div className="flex gap-2 flex-wrap items-center">
+                {anom.anomalyType === "visitor_payer" && (
+                  <ActionBtn color="#6366f1" outline onClick={() => handleAddAsMember(anom.id)}>
+                    Add as Member Instead
+                  </ActionBtn>
+                )}
+                <ActionBtn color="#64748b" outline onClick={() => handleSkipAutoFixed(anom.id)}>
+                  Override: Skip This Row Instead
+                </ActionBtn>
+              </div>
+            </div>
           )}
 
           {/* Skipped → show undo */}
@@ -607,7 +812,10 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-sm text-emerald-400">
                 ✓{" "}
-                {anom.anomalyType === "settlement_candidate" ? "Will be converted to a settlement."
+                {anom.editedValue?.mapToUserId ? `Payer mapped to ${memberName(anom.editedValue.mapToUserId)}; row will be imported.`
+                 : anom.editedValue?.addAsMember ? "Payer will be added to the group as a member; row will be imported."
+                 : anom.editedValue?.amount != null ? `Amount set to ${formatCurrency(anom.editedValue.amount, anom.rawRow?.currency?.trim().toUpperCase() || "INR")}; row will be imported.`
+                 : anom.anomalyType === "settlement_candidate" ? "Will be converted to a settlement."
                  : anom.anomalyType === "conflicting_duplicate" ? `Row ${anom.rowNumber} data will be used.`
                  : anom.anomalyType === "exact_duplicate" ? "Row will be kept."
                  : "Row will be imported."}
@@ -639,6 +847,7 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
     const rep = group[0];
     const cfg = getAnomalyConfig(rep.anomalyType);
     const ids = group.map((a) => a.id);
+    const groupKey = ids.join(",");
 
     // Resolution summary
     const pendingIds    = group.filter((a) => a.resolution === "pending").map((a) => a.id);
@@ -670,7 +879,7 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
         {/* ── Header ── */}
         <div className="flex justify-between items-start gap-3 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="bg-slate-950/80 border border-white/[0.09] px-2 py-0.5 rounded text-[0.68rem] text-slate-500 font-mono font-bold tracking-wide">
+            <span className="bg-slate-950/80 border border-white/9 px-2 py-0.5 rounded text-[0.68rem] text-slate-500 font-mono font-bold tracking-wide">
               {rowLabel}
             </span>
             <span
@@ -749,11 +958,81 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
                   </ActionBtn>
                 </>
               )}
-              {!["exact_duplicate", "conflicting_duplicate", "settlement_candidate", "ambiguous_date", "invalid_percentage_sum"].includes(rep.anomalyType) && (
+              {/* ambiguous dates that share the same value → apply one reading to all */}
+              {rep.anomalyType === "ambiguous_date" && rep.editedValue?.dateOptions && (
+                <>
+                  {rep.editedValue.dateOptions.map((opt: any, idx: number) => (
+                    <ActionBtn key={idx} color="#6366f1" outline onClick={() => handleResolveMany(pendingIds, "user_approved", { ...rep.editedValue, date: opt.value })}>
+                      All → {opt.label}
+                    </ActionBtn>
+                  ))}
+                  <ActionBtn color="#94a3b8" outline onClick={() => handleResolveMany(pendingIds, "user_rejected")}>
+                    Skip All {pendingIds.length}
+                  </ActionBtn>
+                </>
+              )}
+              {/* missing / unknown payer → map all to one member */}
+              {(rep.anomalyType === "missing_payer" || rep.anomalyType === "unknown_payer") && (
+                <div className="flex flex-col gap-1.5 w-full">
+                  <span className="text-xs text-slate-500">Map all {pendingIds.length} to one member:</span>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <select
+                      value={payerMapSel[groupKey] ?? ""}
+                      onChange={(e) => setPayerMapSel((p) => ({ ...p, [groupKey]: e.target.value }))}
+                      className="bg-slate-950/60 border border-white/15 rounded-md px-2 py-1.5 text-sm text-slate-100"
+                    >
+                      <option value="">Select member…</option>
+                      {members.map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                    </select>
+                    <ActionBtn color="#10b981" disabled={!payerMapSel[groupKey]} onClick={() => handleMapPayerMany(pendingIds, payerMapSel[groupKey])}>
+                      Map All {pendingIds.length} &amp; Import
+                    </ActionBtn>
+                    <ActionBtn color="#94a3b8" outline onClick={() => handleResolveMany(pendingIds, "user_rejected")}>
+                      Skip All {pendingIds.length}
+                    </ActionBtn>
+                  </div>
+                </div>
+              )}
+              {/* non-member payers → add all as members, import all as one-off, or skip */}
+              {rep.anomalyType === "non_member_payer" && (
+                <>
+                  <ActionBtn color="#6366f1" onClick={() => handleAddAsMemberMany(pendingIds)}>
+                    Add All {pendingIds.length} as Members
+                  </ActionBtn>
+                  <ActionBtn color="#10b981" outline onClick={() => handleResolveMany(pendingIds, "user_approved")}>
+                    Import All as One-off
+                  </ActionBtn>
+                  <ActionBtn color="#94a3b8" outline onClick={() => handleResolveMany(pendingIds, "user_rejected")}>
+                    Skip All {pendingIds.length}
+                  </ActionBtn>
+                </>
+              )}
+              {/* malformed amounts (same bad value) → apply one correction to all */}
+              {rep.anomalyType === "malformed_amount" && (
+                <div className="flex flex-col gap-1.5 w-full">
+                  <span className="text-xs text-slate-500">Apply one corrected amount to all {pendingIds.length}:</span>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <input
+                      type="number" step="0.01" placeholder="0.00"
+                      value={amountEdits[groupKey] ?? ""}
+                      onChange={(e) => setAmountEdits((p) => ({ ...p, [groupKey]: e.target.value }))}
+                      className="bg-slate-950/60 border border-white/15 rounded-md px-2 py-1.5 text-sm text-slate-100 w-32"
+                    />
+                    <ActionBtn color="#10b981" disabled={!isValidAmount(amountEdits[groupKey])} onClick={() => handleApplyAmountMany(group.filter((a) => a.resolution === "pending"), amountEdits[groupKey])}>
+                      Apply to All {pendingIds.length}
+                    </ActionBtn>
+                    <ActionBtn color="#94a3b8" outline onClick={() => handleResolveMany(pendingIds, "user_rejected")}>
+                      Skip All {pendingIds.length}
+                    </ActionBtn>
+                  </div>
+                </div>
+              )}
+              {/* generic fallback: invalid_date, inactive_member_payer, zero_amount, etc. */}
+              {!["exact_duplicate", "conflicting_duplicate", "settlement_candidate", "ambiguous_date", "invalid_percentage_sum", "missing_payer", "unknown_payer", "non_member_payer", "malformed_amount"].includes(rep.anomalyType) && (
                 <>
                   <ActionBtn color="#10b981" onClick={() => handleResolveMany(pendingIds, "user_approved")}>
                     {rep.anomalyType === "zero_amount" ? `Import All ${pendingIds.length} as Zero`
-                     : ["inactive_member_payer", "non_member_payer", "unknown_payer"].includes(rep.anomalyType) ? `Import All ${pendingIds.length} Anyway`
+                     : rep.anomalyType === "inactive_member_payer" ? `Import All ${pendingIds.length} Anyway`
                      : `Import All ${pendingIds.length} Rows`}
                   </ActionBtn>
                   <ActionBtn color="#94a3b8" outline onClick={() => handleResolveMany(pendingIds, "user_rejected")}>
@@ -766,9 +1045,16 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
 
           {/* Auto-fixed bulk override */}
           {uniformRes === "auto_fixed" && (
-            <ActionBtn color="#64748b" outline onClick={() => handleSkipAutoFixedMany(ids)}>
-              Override: Skip All {group.length} Instead
-            </ActionBtn>
+            <div className="flex gap-2 flex-wrap items-center">
+              {rep.anomalyType === "visitor_payer" && (
+                <ActionBtn color="#6366f1" outline onClick={() => handleAddAsMemberMany(ids)}>
+                  Add All {group.length} as Members Instead
+                </ActionBtn>
+              )}
+              <ActionBtn color="#64748b" outline onClick={() => handleSkipAutoFixedMany(ids)}>
+                Override: Skip All {group.length} Instead
+              </ActionBtn>
+            </div>
           )}
 
           {/* Rejected bulk undo */}
@@ -960,6 +1246,20 @@ export default function ImportPanel({ groupId, onImportComplete }: ImportPanelPr
               </button>
             ))}
           </div>
+
+          {/* Bulk ambiguous-date policy — apply one DD/MM vs MM/DD reading to every ambiguous date */}
+          {ambiguousDatePending.length >= 2 && (
+            <div className="glass-card p-4 border border-amber-500/30 flex items-center gap-3 flex-wrap">
+              <span className="text-sm text-amber-300 font-semibold">{ambiguousDatePending.length} ambiguous dates</span>
+              <span className="text-sm text-slate-400">— apply one interpretation to all:</span>
+              <ActionBtn color="#6366f1" outline onClick={() => handleBulkAmbiguousDate(0)}>
+                Treat all as DD/MM/YYYY
+              </ActionBtn>
+              <ActionBtn color="#6366f1" outline onClick={() => handleBulkAmbiguousDate(1)}>
+                Treat all as MM/DD/YYYY
+              </ActionBtn>
+            </div>
+          )}
 
           {/* Anomaly list */}
           <div className="flex flex-col gap-3">
