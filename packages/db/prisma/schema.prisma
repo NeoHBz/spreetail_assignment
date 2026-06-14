@@ -1,43 +1,40 @@
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["driverAdapters"]
+  provider = "prisma-client-js"
 }
 
-
 model User {
-  id           String            @id @default(uuid())
+  id           String   @id @default(uuid())
   name         String
-  email        String            @unique
+  email        String   @unique
   passwordHash String
-  createdAt    DateTime          @default(now())
+  createdAt    DateTime @default(now())
 
-  memberships  GroupMembership[]
-  paidExpenses Expense[]         @relation("PaidByUser")
-  splits       ExpenseSplit[]
-  sentSettlements     Settlement[] @relation("SentSettlements")
-  receivedSettlements Settlement[] @relation("ReceivedSettlements")
-  addedGuests  Guest[]           @relation("AddedGuests")
+  memberships         GroupMembership[]
+  paidExpenses        Expense[]         @relation("PaidByUser")
+  splits              ExpenseSplit[]
+  sentSettlements     Settlement[]      @relation("SentSettlements")
+  receivedSettlements Settlement[]      @relation("ReceivedSettlements")
+  addedGuests         Guest[]           @relation("AddedGuests")
 }
 
 model Guest {
-  id            String         @id @default(uuid())
+  id            String   @id @default(uuid())
   name          String
   addedByUserId String
-  createdAt     DateTime       @default(now())
+  createdAt     DateTime @default(now())
 
-  addedByUser   User           @relation("AddedGuests", fields: [addedByUserId], references: [id])
-  splits        ExpenseSplit[]
+  addedByUser User           @relation("AddedGuests", fields: [addedByUserId], references: [id])
+  splits      ExpenseSplit[]
 }
 
 model Group {
-  id        String            @id @default(uuid())
+  id        String   @id @default(uuid())
   name      String
-  createdAt DateTime          @default(now())
+  createdAt DateTime @default(now())
 
   memberships    GroupMembership[]
   expenses       Expense[]
@@ -59,7 +56,7 @@ model GroupMembership {
 }
 
 model Expense {
-  id                     String         @id @default(uuid())
+  id                     String    @id @default(uuid())
   groupId                String
   paidByUserId           String
   description            String
@@ -67,10 +64,10 @@ model Expense {
   amountOriginalCurrency String
   convertedAmountInr     Decimal
   date                   DateTime
-  splitType              String         // "equal", "unequal", "percentage", "share"
+  splitType              String // "equal", "unequal", "percentage", "share"
   notes                  String?
-  source                 String         // "manual", "import"
-  createdAt              DateTime       @default(now())
+  source                 String // "manual", "import"
+  createdAt              DateTime  @default(now())
   deletedAt              DateTime?
 
   group  Group          @relation(fields: [groupId], references: [id])
@@ -79,7 +76,7 @@ model Expense {
 }
 
 model ExpenseSplit {
-  id         String   @id @default(uuid())
+  id         String  @id @default(uuid())
   expenseId  String
   userId     String?
   guestId    String?
@@ -103,9 +100,9 @@ model Settlement {
   notes      String?
   createdAt  DateTime @default(now())
 
-  group  Group @relation(fields: [groupId], references: [id])
-  fromUser User @relation("SentSettlements", fields: [fromUserId], references: [id])
-  toUser   User @relation("ReceivedSettlements", fields: [toUserId], references: [id])
+  group    Group @relation(fields: [groupId], references: [id])
+  fromUser User  @relation("SentSettlements", fields: [fromUserId], references: [id])
+  toUser   User  @relation("ReceivedSettlements", fields: [toUserId], references: [id])
 }
 
 model ExchangeRate {
@@ -121,7 +118,7 @@ model ImportSession {
   id        String   @id @default(uuid())
   groupId   String
   filename  String
-  status    String   // "pending", "reviewed", "committed"
+  status    String // "pending", "reviewed", "committed"
   createdAt DateTime @default(now())
 
   group     Group           @relation(fields: [groupId], references: [id])
@@ -130,13 +127,13 @@ model ImportSession {
 }
 
 model ImportAnomaly {
-  id              String   @id @default(uuid())
+  id              String  @id @default(uuid())
   sessionId       String
   rowNumber       Int
   anomalyType     String
   description     String
   rawRow          Json
-  resolution      String   // "auto_fixed", "user_approved", "user_rejected", "pending"
+  resolution      String // "auto_fixed", "user_approved", "user_rejected", "pending"
   resolutionNotes String?
   editedValue     Json?
 
@@ -144,12 +141,12 @@ model ImportAnomaly {
 }
 
 model ImportRow {
-  id                String   @id @default(uuid())
-  sessionId         String
-  rowNumber         Int
-  rawData           Json
-  status            String   // "staged", "committed", "rejected"
-  mappedExpenseId   String?
+  id                 String  @id @default(uuid())
+  sessionId          String
+  rowNumber          Int
+  rawData            Json
+  status             String // "staged", "committed", "rejected"
+  mappedExpenseId    String?
   mappedSettlementId String?
 
   session ImportSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
