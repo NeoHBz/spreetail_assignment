@@ -1,114 +1,130 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Always-dark theme — override shadcn CSS vars at :root */
 :root {
-  --font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
-  --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
-  --panel-bg: rgba(30, 41, 59, 0.7);
-  --panel-border: rgba(255, 255, 255, 0.08);
-  
-  --color-primary: #6366f1;
-  --color-primary-hover: #4f46e5;
-  --color-secondary: #0ea5e9;
-  --color-success: #10b981;
-  --color-danger: #ef4444;
-  --color-warning: #f59e0b;
-  
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  
-  --radius-sm: 6px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
-  
-  --transition-fast: 0.15s ease;
-  --transition-normal: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --background: oklch(0.13 0.02 265);      /* slate-950 */
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.18 0.02 265);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.18 0.02 265);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.594 0.235 278.1);     /* indigo-500 */
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.25 0.01 265);
+  --muted-foreground: oklch(0.6 0.01 265);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.594 0.235 278.1);
+  --radius: 0.625rem;
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+@theme inline {
+  --font-heading: 'Outfit', sans-serif;
+  --font-sans: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
 }
 
-body {
-  font-family: var(--font-family);
-  background: var(--bg-gradient);
-  color: var(--text-primary);
-  min-height: 100vh;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    font-family: theme(fontFamily.sans);
+    background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+    background-attachment: fixed;
+    color: var(--foreground);
+    min-height: 100vh;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a {
+    color: oklch(0.65 0.18 222);
+    text-decoration: none;
+    transition: color 0.15s ease;
+  }
+  a:hover {
+    color: var(--primary);
+  }
 }
 
-button, input, select, textarea {
-  font-family: inherit;
-}
-
-a {
-  color: var(--color-secondary);
-  text-decoration: none;
-  transition: color var(--transition-fast);
-}
-
-a:hover {
-  color: var(--color-primary);
-}
-
-/* Glassmorphic card styling */
-.card {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
+/* Glassmorphic card — used via the .glass-card utility */
+.glass-card {
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-radius: var(--radius-md);
+  border-radius: 1.125rem;
   padding: 1.5rem;
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
-  transition: transform var(--transition-normal), box-shadow var(--transition-normal);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
-
-.card:hover {
+.glass-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
 }
 
-/* Utility layout classes */
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 2rem 1rem;
-}
-
-.flex {
-  display: flex;
-}
-
-.flex-col {
-  flex-direction: column;
-}
-
-.items-center {
-  align-content: center;
+/* Split chip — indigo pill */
+.split-chip {
+  display: inline-flex;
   align-items: center;
+  gap: 0.25rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 100px;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  color: #c0c1ff;
+  font-size: 0.75rem;
+  font-weight: 500;
 }
 
-.justify-between {
-  justify-content: space-between;
+/* Thin scrollbar */
+.scroll-list {
+  max-height: 480px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.08) transparent;
 }
+.scroll-list::-webkit-scrollbar { width: 4px; }
+.scroll-list::-webkit-scrollbar-track { background: transparent; }
+.scroll-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
-.grid {
-  display: grid;
-}
-
-.gap-1 { gap: 0.25rem; }
-.gap-2 { gap: 0.5rem; }
-.gap-4 { gap: 1rem; }
-.gap-6 { gap: 1.5rem; }
-.gap-8 { gap: 2rem; }
-
-/* Micro-animations */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
 .animate-fade-in {
-  animation: fadeIn var(--transition-normal);
+  animation: fadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }

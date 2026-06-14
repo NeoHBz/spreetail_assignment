@@ -7,6 +7,7 @@ import expensesRouter from "./routes/expenses";
 import settlementsRouter from "./routes/settlements";
 import balancesRouter from "./routes/balances";
 import importRouter from "./routes/import";
+import fxRouter from "./routes/fx";
 
 const app: express.Application = express();
 
@@ -22,6 +23,7 @@ app.use("/expenses", expensesRouter);
 app.use("/settlements", settlementsRouter);
 app.use("/balances", balancesRouter);
 app.use("/import", importRouter);
+app.use("/fx-rates", fxRouter);
 
 app.get("/health", (req, res) => {
   res.json({ status: "healthy" });

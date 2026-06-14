@@ -1,6 +1,52 @@
 import React, { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import ImportPanel from "../components/ImportPanel";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+
+const CURRENCIES = [
+  { code: "INR", symbol: "₹",   label: "INR ₹",    locale: "en-IN", decimals: 2 },
+  { code: "USD", symbol: "$",   label: "USD $",    locale: "en-US", decimals: 2 },
+  { code: "EUR", symbol: "€",   label: "EUR €",    locale: "en-US", decimals: 2 },
+  { code: "JPY", symbol: "¥",   label: "JPY ¥",    locale: "ja-JP", decimals: 0 },
+  { code: "GBP", symbol: "£",   label: "GBP £",    locale: "en-GB", decimals: 2 },
+  { code: "CNY", symbol: "¥",   label: "CNY ¥",    locale: "zh-CN", decimals: 2 },
+  { code: "CAD", symbol: "CA$", label: "CAD CA$",  locale: "en-CA", decimals: 2 },
+  { code: "AUD", symbol: "A$",  label: "AUD A$",   locale: "en-AU", decimals: 2 },
+  { code: "CHF", symbol: "CHF", label: "CHF",      locale: "de-CH", decimals: 2 },
+  { code: "HKD", symbol: "HK$", label: "HKD HK$",  locale: "zh-HK", decimals: 2 },
+  { code: "SGD", symbol: "S$",  label: "SGD S$",   locale: "en-SG", decimals: 2 },
+] as const;
+
+const CURRENCY_MAP = Object.fromEntries(CURRENCIES.map((c) => [c.code, c]));
+
+function fmtCurrency(amount: string | number, currency = "INR"): string {
+  const num = parseFloat(String(amount).replace(/,/g, ""));
+  if (isNaN(num)) return String(amount);
+  const cfg = CURRENCY_MAP[currency] ?? CURRENCY_MAP["INR"];
+  return `${cfg.symbol}${num.toLocaleString(cfg.locale, { minimumFractionDigits: cfg.decimals, maximumFractionDigits: cfg.decimals })}`;
+}
+
+function fmtDate(dateStr: string): string {
+  try {
+    return new Date(dateStr).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  } catch {
+    return dateStr;
+  }
+}
 
 interface Member {
   id: string;
@@ -68,11 +114,19 @@ export default function GroupDetails() {
   const [editAmount, setEditAmount] = useState("");
   const [editNotes, setEditNotes] = useState("");
 
+  // Modal visibility
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [showSettlementModal, setShowSettlementModal] = useState(false);
+
   // Settlement Form
   const [setFrom, setSetFrom] = useState("");
   const [setTo, setSetTo] = useState("");
   const [setAmountVal, setSetAmountVal] = useState("");
   const [setDateVal, setSetDateVal] = useState("");
+  const [settlementCurrency, setSettlementCurrency] = useState("INR");
+
+  // FX rates (INR-based, keyed by currency code)
+  const [fxRates, setFxRates] = useState<Record<string, number>>({});
 
   const [error, setError] = useState("");
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
@@ -81,7 +135,7 @@ export default function GroupDetails() {
   const loadAll = async () => {
     try {
       const headers = { Authorization: `Bearer ${localStorage.getItem("token")}` };
-      
+
       // Fetch group details
       const groupRes = await fetch(`http://localhost:3001/groups/${id}`, { headers });
       const groupData = await groupRes.json();
@@ -101,7 +155,7 @@ export default function GroupDetails() {
 
 
       // Fetch balances
-      const balUrl = asOfDate 
+      const balUrl = asOfDate
         ? `http://localhost:3001/balances/group/${id}?asOfDate=${asOfDate}`
         : `http://localhost:3001/balances/group/${id}`;
       const balRes = await fetch(balUrl, { headers });
@@ -116,6 +170,31 @@ export default function GroupDetails() {
   useEffect(() => {
     loadAll();
   }, [id, asOfDate]);
+
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const fetched = localStorage.getItem("fx_rates_fetched");
+    const cacheKey = `fx_rates_${today}`;
+    if (fetched === today) {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        try { setFxRates(JSON.parse(cached)); } catch {}
+        return;
+      }
+    }
+    fetch("http://localhost:3001/fx-rates", {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.rates) {
+          setFxRates(data.rates);
+          localStorage.setItem(cacheKey, JSON.stringify(data.rates));
+          localStorage.setItem("fx_rates_fetched", today);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -222,6 +301,7 @@ export default function GroupDetails() {
       setExpenseDate("");
       setSplitDetails({});
       setSplitType("equal");
+      setShowExpenseModal(false);
       loadAll();
     } catch (err: any) {
       setError(err.message);
@@ -242,7 +322,7 @@ export default function GroupDetails() {
           fromUserId: setFrom,
           toUserId: setTo,
           amount: parseFloat(setAmountVal),
-          currency: "INR",
+          currency: settlementCurrency,
           date: setDateVal,
         }),
       });
@@ -251,6 +331,8 @@ export default function GroupDetails() {
       setSetTo("");
       setSetAmountVal("");
       setSetDateVal("");
+      setSettlementCurrency("INR");
+      setShowSettlementModal(false);
       loadAll();
     } catch (err: any) {
       setError(err.message);
@@ -260,7 +342,7 @@ export default function GroupDetails() {
   const handleFetchDrilldown = async (userId: string) => {
     setSelectedDrilldownUser(userId);
     try {
-      const balUrl = asOfDate 
+      const balUrl = asOfDate
         ? `http://localhost:3001/balances/group/${id}/user/${userId}?asOfDate=${asOfDate}`
         : `http://localhost:3001/balances/group/${id}/user/${userId}`;
       const res = await fetch(balUrl, {
@@ -332,82 +414,61 @@ export default function GroupDetails() {
     }
   };
 
-  if (!group) return <div className="container"><p>Loading...</p></div>;
+  if (!group) return <div className="max-w-6xl mx-auto px-4 py-8"><p className="text-slate-400">Loading...</p></div>;
 
   return (
-    <div className="container animate-fade-in flex flex-col gap-8">
+    <div className="max-w-6xl mx-auto px-4 py-8 animate-fade-in flex flex-col gap-8">
       {/* Group Header */}
       <div className="flex justify-between items-center">
         <div>
-          <Link to="/" style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>&larr; Back to Dashboard</Link>
-          <h1 style={{ marginTop: "0.5rem" }}>{group.name}</h1>
+          <Link to="/" className="text-sm text-slate-400 hover:text-indigo-400 transition-colors">&larr; Back to Dashboard</Link>
+          <h1 className="mt-2 text-2xl font-bold text-slate-100">{group.name}</h1>
         </div>
         <div className="flex gap-2 items-center">
-          <label style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>As of Date:</label>
-          <input
+          <label className="text-sm text-slate-400">As of Date:</label>
+          <Input
             type="date"
             value={asOfDate}
             onChange={(e) => setAsOfDate(e.target.value)}
-            style={{
-              background: "rgba(30, 41, 59, 0.7)",
-              border: "1px solid var(--panel-border)",
-              borderRadius: "var(--radius-sm)",
-              padding: "0.4rem 0.8rem",
-              color: "white"
-            }}
+            className="w-auto bg-slate-800/70 border-white/[0.08] text-white"
           />
         </div>
       </div>
 
       {error && (
-        <div style={{
-          background: "rgba(239, 68, 68, 0.2)",
-          border: "1px solid var(--color-danger)",
-          color: "var(--color-danger)",
-          padding: "1rem",
-          borderRadius: "var(--radius-sm)"
-        }}>
+        <div className="bg-red-500/20 border border-red-500/40 text-red-400 px-4 py-3 rounded-md text-sm">
           {error}
         </div>
       )}
 
       {/* Grid of details */}
-      <div className="grid" style={{ gridTemplateColumns: "2fr 1fr", gap: "2rem" }}>
-        
-        {/* Left column: Expenses & Settlements */}
+      <div className="grid grid-cols-[2fr_1fr] gap-8">
+
+        {/* Left column: Members & Expenses */}
         <div className="flex flex-col gap-6">
-          
+
           {/* Members List */}
-          <div className="card">
-            <h3>Group Members</h3>
-            <div className="flex flex-col gap-2" style={{ marginTop: "1rem" }}>
+          <div className="glass-card">
+            <h3 className="text-slate-100 font-semibold mb-4">Group Members</h3>
+            <div className="flex flex-col gap-2">
               {group.members.map((m: Member) => (
-                <div key={m.id} className="flex justify-between items-center" style={{
-                  padding: "0.6rem",
-                  background: "rgba(255,255,255,0.02)",
-                  borderRadius: "var(--radius-sm)"
-                }}>
+                <div key={m.id} className="flex justify-between items-center p-2 rounded-md bg-white/[0.02]">
                   <div>
-                    <strong>{m.name}</strong>
-                    <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginLeft: "0.5rem" }}>
-                      ({m.email})
-                    </span>
+                    <strong className="text-slate-100">{m.name}</strong>
+                    <span className="text-xs text-slate-500 ml-2">({m.email})</span>
                   </div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                  <div className="text-xs text-slate-400">
                     {m.leftAt ? (
-                      <span style={{ color: "var(--color-danger)" }}>Left {new Date(m.leftAt).toLocaleDateString()}</span>
+                      <span className="text-red-400">Left {new Date(m.leftAt).toLocaleDateString()}</span>
                     ) : (
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-amber-400 hover:text-amber-300"
                         onClick={() => markMemberLeft(m.id)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          color: "var(--color-warning)",
-                          cursor: "pointer"
-                        }}
                       >
                         Mark Left
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -415,175 +476,132 @@ export default function GroupDetails() {
             </div>
 
             {/* Add Member form */}
-            <form onSubmit={handleAddMember} className="flex gap-2" style={{ marginTop: "1rem" }}>
-              <input
+            <form onSubmit={handleAddMember} className="flex gap-2 mt-4">
+              <Input
                 type="email"
                 placeholder="User Email"
                 value={memberEmail}
                 onChange={(e) => setMemberEmail(e.target.value)}
                 required
-                style={{
-                  flex: 1,
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--panel-border)",
-                  color: "white",
-                  padding: "0.4rem",
-                  borderRadius: "var(--radius-sm)"
-                }}
+                className="flex-1 bg-black/20 border-white/[0.08] text-white"
               />
-              <input
+              <Input
                 type="date"
                 value={memberJoinDate}
                 onChange={(e) => setMemberJoinDate(e.target.value)}
                 required
-                style={{
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--panel-border)",
-                  color: "white",
-                  padding: "0.4rem",
-                  borderRadius: "var(--radius-sm)"
-                }}
+                className="w-auto bg-black/20 border-white/[0.08] text-white"
               />
-              <button
-                type="submit"
-                style={{
-                  background: "var(--color-primary)",
-                  border: "none",
-                  color: "white",
-                  padding: "0.4rem 0.8rem",
-                  borderRadius: "var(--radius-sm)",
-                  cursor: "pointer"
-                }}
-              >
-                Add Member
-              </button>
+              <Button type="submit" size="sm">Add Member</Button>
             </form>
           </div>
 
           {/* Expenses list */}
-          <div className="card">
-            <h3>Expenses</h3>
-            <div className="flex flex-col gap-4" style={{ marginTop: "1rem" }}>
+          <div className="glass-card">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-slate-100 font-semibold">Expenses</h3>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/15"
+                onClick={() => setShowExpenseModal(true)}
+              >
+                + Add Expense
+              </Button>
+            </div>
+            <div className="flex flex-col">
               {expenses.length === 0 ? (
-                <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>No expenses recorded yet.</p>
+                <p className="text-slate-500 text-sm">No expenses recorded yet.</p>
               ) : (
                 expenses.map((e) => (
-                  <div key={e.id} style={{
-                    padding: "1rem",
-                    borderBottom: "1px solid var(--panel-border)"
-                  }}>
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <strong>{e.description}</strong>
-                        <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.2rem" }}>
-                          Paid by {e.paidBy?.name} on {new Date(e.date).toLocaleDateString()}
+                  <div key={e.id} className="py-4 border-b border-white/[0.08] last:border-0">
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="flex-1 min-w-0">
+                        <strong className="text-[0.95rem] block mb-1 text-slate-100">{e.description}</strong>
+                        <div className="text-[0.82rem] text-slate-400">
+                          Paid by{" "}
+                          <span className="text-slate-100 font-semibold">{e.paidBy?.name}</span>
+                          {" · "}
+                          {fmtDate(e.date)}
+                          {" · "}
+                          <span className="capitalize text-slate-500">{e.splitType} split</span>
                         </div>
                       </div>
-                      <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.4rem" }}>
-                        <span style={{ fontSize: "1.1rem", fontWeight: "bold" }}>
-                          {e.amountOriginalCurrency === "USD" ? `$${e.amountOriginal}` : `\u20b9${e.amountOriginal}`}
+                      <div className="flex flex-col items-end gap-1.5 shrink-0">
+                        <span className={`text-[1.05rem] font-bold ${e.amountOriginalCurrency !== "INR" ? "text-sky-400" : "text-slate-100"}`}>
+                          {fmtCurrency(e.amountOriginal, e.amountOriginalCurrency)}
                         </span>
-                        {e.amountOriginalCurrency === "USD" && (
-                          <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                            (\u20b9{parseFloat(e.convertedAmountInr).toFixed(2)})
-                          </div>
+                        {e.amountOriginalCurrency !== "INR" && (
+                          <span className="text-[0.76rem] text-slate-500">
+                            ≈ {fmtCurrency(e.convertedAmountInr)} INR
+                          </span>
                         )}
                         <div className="flex gap-2">
-                          <button
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/15"
                             onClick={() => {
                               setEditingExpenseId(e.id);
                               setEditDesc(e.description);
                               setEditAmount(String(e.amountOriginal));
                               setEditNotes(e.notes || "");
                             }}
-                            style={{
-                              background: "rgba(99,102,241,0.2)",
-                              border: "1px solid var(--color-primary)",
-                              color: "white",
-                              padding: "0.25rem 0.6rem",
-                              borderRadius: "var(--radius-sm)",
-                              cursor: "pointer",
-                              fontSize: "0.78rem"
-                            }}
                           >
                             Edit
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-red-500/40 text-red-400 hover:bg-red-500/10"
                             onClick={() => handleDeleteExpense(e.id, e.description)}
-                            style={{
-                              background: "rgba(239,68,68,0.15)",
-                              border: "1px solid var(--color-danger)",
-                              color: "var(--color-danger)",
-                              padding: "0.25rem 0.6rem",
-                              borderRadius: "var(--radius-sm)",
-                              cursor: "pointer",
-                              fontSize: "0.78rem"
-                            }}
                           >
                             Delete
-                          </button>
+                          </Button>
                         </div>
                       </div>
                     </div>
+
                     {/* Splits breakdown */}
-                    <div style={{ marginTop: "0.8rem", paddingLeft: "1rem", borderLeft: "2px dashed var(--panel-border)" }}>
-                      <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Splits:</span>
-                      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.4rem", marginTop: "0.2rem" }}>
-                        {e.splits.map((s: any, idx: number) => (
-                          <div key={idx} style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-                            {s.user?.name || s.guest?.name}: <span style={{ color: "white" }}>\u20b9{parseFloat(s.owedAmount).toFixed(2)}</span>
-                          </div>
-                        ))}
-                      </div>
+                    <div className="mt-1.5 pl-3 pt-2 pb-1 border-l-2 border-white/[0.08] flex flex-wrap gap-1.5">
+                      {e.splits.map((s: any, idx: number) => (
+                        <span key={idx} className="split-chip">
+                          {s.user?.name || s.guest?.name}
+                          <span className="opacity-60 mx-0.5">·</span>
+                          {fmtCurrency(s.owedAmount)}
+                        </span>
+                      ))}
                     </div>
+
                     {/* Inline edit form */}
                     {editingExpenseId === e.id && (
-                      <div style={{
-                        marginTop: "1rem",
-                        padding: "0.75rem",
-                        background: "rgba(99,102,241,0.07)",
-                        border: "1px solid var(--color-primary)",
-                        borderRadius: "var(--radius-sm)",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "0.5rem"
-                      }}>
-                        <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Edit Expense</span>
-                        <input
+                      <div className="mt-3 p-3 bg-indigo-500/[0.06] border border-indigo-500/25 rounded-md flex flex-col gap-2">
+                        <span className="text-[0.72rem] text-slate-500 uppercase tracking-wide font-bold">Edit Expense</span>
+                        <Input
                           type="text"
                           value={editDesc}
                           onChange={(ev) => setEditDesc(ev.target.value)}
                           placeholder="Description"
-                          style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--panel-border)", color: "white", padding: "0.4rem" }}
+                          className="bg-black/20 border-white/[0.08] text-white"
                         />
-                        <input
+                        <Input
                           type="number"
                           value={editAmount}
                           onChange={(ev) => setEditAmount(ev.target.value)}
                           placeholder="Amount"
                           step="0.01"
-                          style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--panel-border)", color: "white", padding: "0.4rem" }}
+                          className="bg-black/20 border-white/[0.08] text-white"
                         />
-                        <input
+                        <Input
                           type="text"
                           value={editNotes}
                           onChange={(ev) => setEditNotes(ev.target.value)}
                           placeholder="Notes (optional)"
-                          style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--panel-border)", color: "white", padding: "0.4rem" }}
+                          className="bg-black/20 border-white/[0.08] text-white"
                         />
                         <div className="flex gap-2">
-                          <button
-                            onClick={() => handleEditExpense(e.id)}
-                            style={{ background: "var(--color-primary)", border: "none", color: "white", padding: "0.4rem 0.8rem", borderRadius: "var(--radius-sm)", cursor: "pointer", fontSize: "0.85rem" }}
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => setEditingExpenseId(null)}
-                            style={{ background: "transparent", border: "1px solid var(--panel-border)", color: "var(--text-secondary)", padding: "0.4rem 0.8rem", borderRadius: "var(--radius-sm)", cursor: "pointer", fontSize: "0.85rem" }}
-                          >
-                            Cancel
-                          </button>
+                          <Button size="sm" onClick={() => handleEditExpense(e.id)}>Save</Button>
+                          <Button variant="outline" size="sm" onClick={() => setEditingExpenseId(null)}>Cancel</Button>
                         </div>
                       </div>
                     )}
@@ -597,55 +615,57 @@ export default function GroupDetails() {
 
         {/* Right column: Balances & Calculations */}
         <div className="flex flex-col gap-6">
-          
+
           {/* Net Balances */}
-          <div className="card">
-            <h3>Net Balances</h3>
-            <div className="flex flex-col gap-3" style={{ marginTop: "1rem" }}>
+          <div className="glass-card">
+            <h3 className="text-slate-100 font-semibold mb-4">Net Balances</h3>
+            <div className="flex flex-col gap-3">
               {balances.map((b) => (
                 <div
                   key={b.userId}
                   onClick={() => handleFetchDrilldown(b.userId)}
-                  style={{
-                    padding: "0.8rem",
-                    background: selectedDrilldownUser === b.userId ? "rgba(99, 102, 241, 0.15)" : "rgba(255,255,255,0.02)",
-                    borderRadius: "var(--radius-sm)",
-                    cursor: "pointer",
-                    border: selectedDrilldownUser === b.userId ? "1px solid var(--color-primary)" : "1px solid transparent",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center"
-                  }}
+                  className={`flex justify-between items-center p-3 rounded-md cursor-pointer border transition-colors ${
+                    selectedDrilldownUser === b.userId
+                      ? "bg-indigo-500/15 border-indigo-500"
+                      : "bg-white/[0.02] border-transparent hover:bg-white/[0.04]"
+                  }`}
                 >
-                  <span>{b.name}</span>
-                  <strong style={{
-                    color: b.netBalance >= 0 ? "var(--color-success)" : "var(--color-danger)"
-                  }}>
-                    {b.netBalance >= 0 ? `+₹${b.netBalance.toFixed(2)}` : `-₹${Math.abs(b.netBalance).toFixed(2)}`}
+                  <span className="text-slate-100">{b.name}</span>
+                  <strong className={`font-bold ${b.netBalance > 0 ? "text-emerald-400" : b.netBalance < 0 ? "text-red-400" : "text-slate-400"}`}>
+                    {b.netBalance > 0
+                      ? `+${fmtCurrency(b.netBalance)}`
+                      : b.netBalance < 0
+                      ? `−${fmtCurrency(Math.abs(b.netBalance))}`
+                      : fmtCurrency(0)
+                    }
                   </strong>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Settlement Suggestions (Aisha's View) */}
-          <div className="card">
-            <h3>Settlement Suggestions</h3>
-            <div className="flex flex-col gap-3" style={{ marginTop: "1rem" }}>
+          {/* Settlement Suggestions */}
+          <div className="glass-card">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-slate-100 font-semibold">Settlement Suggestions</h3>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/15"
+                onClick={() => setShowSettlementModal(true)}
+              >
+                Record Payment
+              </Button>
+            </div>
+            <div className="flex flex-col gap-3">
               {suggestions.length === 0 ? (
-                <p style={{ color: "var(--text-success)", fontSize: "0.9rem" }}>Everyone is settled up!</p>
+                <p className="text-emerald-400 text-sm">Everyone is settled up!</p>
               ) : (
                 suggestions.map((s, idx) => (
-                  <div key={idx} style={{
-                    padding: "0.8rem",
-                    background: "rgba(16, 185, 129, 0.05)",
-                    border: "1px solid rgba(16, 185, 129, 0.2)",
-                    borderRadius: "var(--radius-sm)",
-                    fontSize: "0.95rem"
-                  }}>
-                    <strong>{s.fromUserName}</strong> pays <strong>{s.toUserName}</strong>
-                    <div style={{ fontSize: "1.1rem", fontWeight: "bold", color: "var(--color-success)", marginTop: "0.2rem" }}>
-                      ₹{s.amount.toFixed(2)}
+                  <div key={idx} className="p-3 bg-emerald-500/[0.05] border border-emerald-500/20 rounded-md text-sm">
+                    <span className="text-slate-100"><strong>{s.fromUserName}</strong> pays <strong>{s.toUserName}</strong></span>
+                    <div className="text-[1.05rem] font-bold text-emerald-400 mt-1">
+                      {fmtCurrency(s.amount)}
                     </div>
                   </div>
                 ))
@@ -653,328 +673,249 @@ export default function GroupDetails() {
             </div>
           </div>
 
-          {/* Record Settlement Form */}
-          <div className="card">
-            <h3>Record Payment</h3>
-            <form onSubmit={handleCreateSettlement} className="flex flex-col gap-3" style={{ marginTop: "1rem" }}>
-              <select
-                value={setFrom}
-                onChange={(e) => setSetFrom(e.target.value)}
-                required
-                style={{
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--panel-border)",
-                  color: "white",
-                  padding: "0.5rem"
-                }}
-              >
-                <option value="">Who paid?</option>
-                {group.members.map((m: any) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-              <select
-                value={setTo}
-                onChange={(e) => setSetTo(e.target.value)}
-                required
-                style={{
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--panel-border)",
-                  color: "white",
-                  padding: "0.5rem"
-                }}
-              >
-                <option value="">To whom?</option>
-                {group.members.map((m: any) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-              <input
-                type="number"
-                placeholder="Amount (INR)"
-                value={setAmountVal}
-                onChange={(e) => setSetAmountVal(e.target.value)}
-                required
-                style={{
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--panel-border)",
-                  color: "white",
-                  padding: "0.5rem"
-                }}
-              />
-              <input
-                type="date"
-                value={setDateVal}
-                onChange={(e) => setSetDateVal(e.target.value)}
-                required
-
-                style={{
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--panel-border)",
-                  color: "white",
-                  padding: "0.5rem"
-                }}
-              />
-              <button
-                type="submit"
-                style={{
-                  background: "var(--color-success)",
-                  border: "none",
-                  color: "white",
-                  padding: "0.6rem",
-                  fontWeight: "bold",
-                  cursor: "pointer"
-                }}
-              >
-                Record Payment
-              </button>
-            </form>
-          </div>
-
-          {/* Quick Expense Form */}
-          <div className="card">
-            <h3>Add Expense</h3>
-            <form onSubmit={handleCreateExpense} className="flex flex-col gap-3" style={{ marginTop: "1rem" }}>
-              <div className="flex flex-col gap-1">
-                <input
-                  type="text"
-                  placeholder="Description"
-                  value={desc}
-                  onChange={(e) => { setDesc(e.target.value); setFormErrors((prev) => ({ ...prev, desc: "" })); }}
-                  style={{
-                    background: formErrors.desc ? "rgba(239,68,68,0.08)" : "rgba(0,0,0,0.2)",
-                    border: `1px solid ${formErrors.desc ? "var(--color-danger)" : "var(--panel-border)"}`,
-                    color: "white",
-                    padding: "0.5rem"
-                  }}
-                />
-                {formErrors.desc && <span style={{ color: "var(--color-danger)", fontSize: "0.78rem" }}>{formErrors.desc}</span>}
-              </div>
-              <div className="flex flex-col gap-1">
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    placeholder="Amount"
-                    value={amount}
-                    onChange={(e) => { setAmount(e.target.value); setFormErrors((prev) => ({ ...prev, amount: "" })); }}
-                    style={{
-                      flex: 1,
-                      background: formErrors.amount ? "rgba(239,68,68,0.08)" : "rgba(0,0,0,0.2)",
-                      border: `1px solid ${formErrors.amount ? "var(--color-danger)" : "var(--panel-border)"}`,
-                      color: "white",
-                      padding: "0.5rem"
-                    }}
-                  />
-                  <select
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
-                    style={{
-                      background: "rgba(0,0,0,0.2)",
-                      border: "1px solid var(--panel-border)",
-                      color: "white",
-                      padding: "0.5rem"
-                    }}
-                  >
-                    <option value="INR">INR</option>
-                    <option value="USD">USD</option>
-                  </select>
-                </div>
-                {formErrors.amount && <span style={{ color: "var(--color-danger)", fontSize: "0.78rem" }}>{formErrors.amount}</span>}
-              </div>
-              <div className="flex flex-col gap-1">
-                <select
-                  value={paidBy}
-                  onChange={(e) => { setPaidBy(e.target.value); setFormErrors((prev) => ({ ...prev, paidBy: "" })); }}
-                  style={{
-                    background: formErrors.paidBy ? "rgba(239,68,68,0.08)" : "rgba(0,0,0,0.2)",
-                    border: `1px solid ${formErrors.paidBy ? "var(--color-danger)" : "var(--panel-border)"}`,
-                    color: "white",
-                    padding: "0.5rem"
-                  }}
-                >
-                  <option value="">Paid By...</option>
-                  {group.members.map((m: any) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
-                {formErrors.paidBy && <span style={{ color: "var(--color-danger)", fontSize: "0.78rem" }}>{formErrors.paidBy}</span>}
-              </div>
-              <select
-                value={splitType}
-                onChange={(e) => { setSplitType(e.target.value); setFormErrors((prev) => ({ ...prev, splits: "" })); }}
-                style={{
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--panel-border)",
-                  color: "white",
-                  padding: "0.5rem"
-                }}
-              >
-                <option value="equal">Equal</option>
-                <option value="unequal">Unequal</option>
-                <option value="percentage">Percentage</option>
-                <option value="share">Share (weighted)</option>
-              </select>
-
-              {/* Dynamic per-person split fields for non-equal types */}
-              {splitType !== "equal" && group.members.filter((m: Member) => {
-                if (!expenseDate) return !m.leftAt;
-                const d = new Date(expenseDate);
-                const joined = new Date(m.joinedAt);
-                const left = m.leftAt ? new Date(m.leftAt) : null;
-                return d >= joined && (!left || d <= left);
-              }).length > 0 && (
-                <div style={{
-                  background: "rgba(0,0,0,0.15)",
-                  border: "1px solid var(--panel-border)",
-                  borderRadius: "var(--radius-sm)",
-                  padding: "0.75rem",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "0.5rem"
-                }}>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase" }}>
-                    {splitType === "unequal" && "Per-person amount (INR)"}
-                    {splitType === "percentage" && "Per-person percentage (must sum to 100%)"}
-                    {splitType === "share" && "Per-person weight (proportional)"}
-                  </span>
-                  {group.members.filter((m: Member) => {
-                    if (!expenseDate) return !m.leftAt;
-                    const d = new Date(expenseDate);
-                    const joined = new Date(m.joinedAt);
-                    const left = m.leftAt ? new Date(m.leftAt) : null;
-                    return d >= joined && (!left || d <= left);
-                  }).map((m: Member) => (
-                    <div key={m.id} className="flex gap-2 items-center">
-                      <span style={{ flex: 1, fontSize: "0.9rem", color: "var(--text-secondary)" }}>{m.name}</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder={splitType === "share" ? "1" : "0"}
-                        value={splitDetails[m.id] ?? ""}
-                        onChange={(e) => { setSplitDetails((prev) => ({ ...prev, [m.id]: e.target.value })); setFormErrors((prev) => ({ ...prev, splits: "" })); }}
-                        style={{
-                          width: "100px",
-                          background: "rgba(0,0,0,0.2)",
-                          border: "1px solid var(--panel-border)",
-                          color: "white",
-                          padding: "0.35rem 0.5rem",
-                          borderRadius: "var(--radius-sm)"
-                        }}
-                      />
-                      {splitType === "percentage" && <span style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>%</span>}
-                    </div>
-                  ))}
-                  {/* Running total indicator */}
-                  {splitType === "percentage" && (
-                    <span style={{
-                      fontSize: "0.8rem",
-                      color: Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - 100) < 0.01
-                        ? "var(--color-success)"
-                        : "var(--color-danger)"
-                    }}>
-                      Total: {Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0).toFixed(1)}%
-                      {Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - 100) < 0.01 ? " ✓" : " — must equal 100%"}
-                    </span>
-                  )}
-                  {splitType === "unequal" && (
-                    <span style={{
-                      fontSize: "0.8rem",
-                      color: amount && Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - parseFloat(amount)) < 0.01
-                        ? "var(--color-success)"
-                        : "var(--color-danger)"
-                    }}>
-                      Total: {Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0).toFixed(2)}
-                      {amount ? ` / ${parseFloat(amount).toFixed(2)}` : ""}
-                      {amount && Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - parseFloat(amount)) < 0.01 ? " ✓" : " — must match total"}
-                    </span>
-                  )}
-                </div>
-              )}
-              {formErrors.splits && (
-                <span style={{ color: "var(--color-danger)", fontSize: "0.78rem" }}>{formErrors.splits}</span>
-              )}
-
-              <div className="flex flex-col gap-1">
-                <input
-                  type="date"
-                  value={expenseDate}
-                  onChange={(e) => { setExpenseDate(e.target.value); setFormErrors((prev) => ({ ...prev, expenseDate: "" })); }}
-                  style={{
-                    background: formErrors.expenseDate ? "rgba(239,68,68,0.08)" : "rgba(0,0,0,0.2)",
-                    border: `1px solid ${formErrors.expenseDate ? "var(--color-danger)" : "var(--panel-border)"}`,
-                    color: "white",
-                    padding: "0.5rem"
-                  }}
-                />
-                {formErrors.expenseDate && <span style={{ color: "var(--color-danger)", fontSize: "0.78rem" }}>{formErrors.expenseDate}</span>}
-              </div>
-              <button
-                type="submit"
-                style={{
-                  background: "var(--color-primary)",
-                  border: "none",
-                  color: "white",
-                  padding: "0.6rem",
-                  fontWeight: "bold",
-                  cursor: "pointer"
-                }}
-              >
-                Add Expense
-              </button>
-            </form>
-          </div>
-
         </div>
 
       </div>
 
-      {/* Rohan's Drilldown Panel */}
+      {/* ── Modals ── */}
+
+      <Dialog open={showSettlementModal} onOpenChange={setShowSettlementModal}>
+        <DialogContent className="bg-slate-900 border-white/[0.08] max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-slate-100">Record Payment</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreateSettlement} className="flex flex-col gap-3">
+            <Select value={setFrom} onValueChange={setSetFrom} required>
+              <SelectTrigger className="bg-black/20 border-white/[0.08] text-slate-100">
+                <SelectValue placeholder="Who paid?" />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-900 border-white/[0.08]">
+                {group.members.map((m: any) => (
+                  <SelectItem key={m.id} value={m.id} className="text-slate-100">{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={setTo} onValueChange={setSetTo} required>
+              <SelectTrigger className="bg-black/20 border-white/[0.08] text-slate-100">
+                <SelectValue placeholder="To whom?" />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-900 border-white/[0.08]">
+                {group.members.map((m: any) => (
+                  <SelectItem key={m.id} value={m.id} className="text-slate-100">{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                placeholder="Amount"
+                value={setAmountVal}
+                onChange={(e) => setSetAmountVal(e.target.value)}
+                required
+                className="flex-1 bg-black/20 border-white/[0.08] text-white"
+              />
+              <Select value={settlementCurrency} onValueChange={setSettlementCurrency}>
+                <SelectTrigger className="w-32 bg-black/20 border-white/[0.08] text-slate-100">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-900 border-white/[0.08]">
+                  {CURRENCIES.map((c) => (
+                    <SelectItem key={c.code} value={c.code} className="text-slate-100">{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Input
+              type="date"
+              value={setDateVal}
+              onChange={(e) => setSetDateVal(e.target.value)}
+              required
+              className="bg-black/20 border-white/[0.08] text-white"
+            />
+            <div className="flex gap-2 mt-1">
+              <Button type="submit" className="flex-1 bg-emerald-500 hover:bg-emerald-600">Record Payment</Button>
+              <Button type="button" variant="outline" onClick={() => setShowSettlementModal(false)}>Cancel</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showExpenseModal} onOpenChange={setShowExpenseModal}>
+        <DialogContent className="bg-slate-900 border-white/[0.08] max-w-[460px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-slate-100">Add Expense</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreateExpense} className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <Input
+                type="text"
+                placeholder="Description"
+                value={desc}
+                onChange={(e) => { setDesc(e.target.value); setFormErrors((prev) => ({ ...prev, desc: "" })); }}
+                className={`bg-black/20 border-white/[0.08] text-white ${formErrors.desc ? "border-red-500/60 bg-red-500/[0.08]" : ""}`}
+              />
+              {formErrors.desc && <span className="text-red-400 text-[0.78rem]">{formErrors.desc}</span>}
+            </div>
+            <div className="flex flex-col gap-1">
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  placeholder="Amount"
+                  value={amount}
+                  onChange={(e) => { setAmount(e.target.value); setFormErrors((prev) => ({ ...prev, amount: "" })); }}
+                  className={`flex-1 bg-black/20 border-white/[0.08] text-white ${formErrors.amount ? "border-red-500/60 bg-red-500/[0.08]" : ""}`}
+                />
+                <Select value={currency} onValueChange={setCurrency}>
+                  <SelectTrigger className="w-32 bg-black/20 border-white/[0.08] text-slate-100">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-900 border-white/[0.08]">
+                    {CURRENCIES.map((c) => (
+                      <SelectItem key={c.code} value={c.code} className="text-slate-100">{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {formErrors.amount && <span className="text-red-400 text-[0.78rem]">{formErrors.amount}</span>}
+              {currency !== "INR" && amount && fxRates[currency] && (
+                <span className="text-[0.76rem] text-slate-500">
+                  ≈ {fmtCurrency(parseFloat(amount) / fxRates[currency])} INR
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col gap-1">
+              <Select value={paidBy} onValueChange={(v) => { setPaidBy(v); setFormErrors((prev) => ({ ...prev, paidBy: "" })); }}>
+                <SelectTrigger className={`bg-black/20 border-white/[0.08] text-slate-100 ${formErrors.paidBy ? "border-red-500/60" : ""}`}>
+                  <SelectValue placeholder="Paid By..." />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-900 border-white/[0.08]">
+                  {group.members.map((m: any) => (
+                    <SelectItem key={m.id} value={m.id} className="text-slate-100">{m.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {formErrors.paidBy && <span className="text-red-400 text-[0.78rem]">{formErrors.paidBy}</span>}
+            </div>
+            <Select value={splitType} onValueChange={(v) => { setSplitType(v); setFormErrors((prev) => ({ ...prev, splits: "" })); }}>
+              <SelectTrigger className="bg-black/20 border-white/[0.08] text-slate-100">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-900 border-white/[0.08]">
+                <SelectItem value="equal" className="text-slate-100">Equal</SelectItem>
+                <SelectItem value="unequal" className="text-slate-100">Unequal</SelectItem>
+                <SelectItem value="percentage" className="text-slate-100">Percentage</SelectItem>
+                <SelectItem value="share" className="text-slate-100">Share (weighted)</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {splitType !== "equal" && group.members.filter((m: Member) => {
+              if (!expenseDate) return !m.leftAt;
+              const d = new Date(expenseDate);
+              const joined = new Date(m.joinedAt);
+              const left = m.leftAt ? new Date(m.leftAt) : null;
+              return d >= joined && (!left || d <= left);
+            }).length > 0 && (
+              <div className="bg-black/15 border border-white/[0.08] rounded-md p-3 flex flex-col gap-2">
+                <span className="text-[0.8rem] text-slate-500 uppercase">
+                  {splitType === "unequal" && "Per-person amount (INR)"}
+                  {splitType === "percentage" && "Per-person percentage (must sum to 100%)"}
+                  {splitType === "share" && "Per-person weight (proportional)"}
+                </span>
+                {group.members.filter((m: Member) => {
+                  if (!expenseDate) return !m.leftAt;
+                  const d = new Date(expenseDate);
+                  const joined = new Date(m.joinedAt);
+                  const left = m.leftAt ? new Date(m.leftAt) : null;
+                  return d >= joined && (!left || d <= left);
+                }).map((m: Member) => (
+                  <div key={m.id} className="flex gap-2 items-center">
+                    <span className="flex-1 text-sm text-slate-400">{m.name}</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder={splitType === "share" ? "1" : "0"}
+                      value={splitDetails[m.id] ?? ""}
+                      onChange={(e) => { setSplitDetails((prev) => ({ ...prev, [m.id]: e.target.value })); setFormErrors((prev) => ({ ...prev, splits: "" })); }}
+                      className="w-24 bg-black/20 border border-white/[0.08] text-white px-2 py-1 rounded text-sm outline-none"
+                    />
+                    {splitType === "percentage" && <span className="text-slate-500 text-sm">%</span>}
+                  </div>
+                ))}
+                {splitType === "percentage" && (
+                  <span className={`text-[0.8rem] ${Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - 100) < 0.01 ? "text-emerald-400" : "text-red-400"}`}>
+                    Total: {Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0).toFixed(1)}%
+                    {Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - 100) < 0.01 ? " ✓" : " — must equal 100%"}
+                  </span>
+                )}
+                {splitType === "unequal" && (
+                  <span className={`text-[0.8rem] ${amount && Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - parseFloat(amount)) < 0.01 ? "text-emerald-400" : "text-red-400"}`}>
+                    Total: {Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0).toFixed(2)}
+                    {amount ? ` / ${parseFloat(amount).toFixed(2)}` : ""}
+                    {amount && Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - parseFloat(amount)) < 0.01 ? " ✓" : " — must match total"}
+                  </span>
+                )}
+              </div>
+            )}
+            {formErrors.splits && <span className="text-red-400 text-[0.78rem]">{formErrors.splits}</span>}
+
+            <div className="flex flex-col gap-1">
+              <Input
+                type="date"
+                value={expenseDate}
+                onChange={(e) => { setExpenseDate(e.target.value); setFormErrors((prev) => ({ ...prev, expenseDate: "" })); }}
+                className={`bg-black/20 border-white/[0.08] text-white ${formErrors.expenseDate ? "border-red-500/60 bg-red-500/[0.08]" : ""}`}
+              />
+              {formErrors.expenseDate && <span className="text-red-400 text-[0.78rem]">{formErrors.expenseDate}</span>}
+            </div>
+            <div className="flex gap-2 mt-1">
+              <Button type="submit" className="flex-1">Add Expense</Button>
+              <Button type="button" variant="outline" onClick={() => setShowExpenseModal(false)}>Cancel</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Drilldown Panel */}
       {selectedDrilldownUser && drilldownData && (
-        <div className="card animate-fade-in" style={{ marginTop: "2rem" }}>
-          <div className="flex justify-between items-center" style={{ borderBottom: "1px solid var(--panel-border)", paddingBottom: "1rem" }}>
-            <h3>Drilldown Breakdown: {group.members.find((m: any) => m.id === selectedDrilldownUser)?.name}</h3>
-            <button
-              onClick={() => setSelectedDrilldownUser(null)}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "var(--text-secondary)",
-                cursor: "pointer"
-              }}
-            >
-              Close
-            </button>
+        <div className="glass-card animate-fade-in mt-8">
+          <div className="flex justify-between items-center border-b border-white/[0.08] pb-4 mb-4">
+            <h3 className="text-slate-100 font-semibold">Drilldown Breakdown: {group.members.find((m: any) => m.id === selectedDrilldownUser)?.name}</h3>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedDrilldownUser(null)}>Close</Button>
           </div>
 
-          <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "2rem", marginTop: "1rem" }}>
+          <div className="grid grid-cols-2 gap-8">
             <div>
-              <h4 style={{ color: "var(--color-success)", marginBottom: "0.5rem" }}>Payments Made (Increases balance)</h4>
+              <h4 className="text-emerald-400 font-medium mb-2">Payments Made (Increases balance)</h4>
               <div className="flex flex-col gap-2">
                 {drilldownData.paidExpenses.map((exp: any) => (
-                  <div key={exp.id} style={{ fontSize: "0.9rem", padding: "0.4rem", background: "rgba(255,255,255,0.02)" }}>
-                    {exp.description} ({new Date(exp.date).toLocaleDateString()}): <strong>+₹{parseFloat(exp.convertedAmountInr).toFixed(2)}</strong>
+                  <div key={exp.id} className="text-[0.85rem] px-2 py-1.5 bg-emerald-500/[0.04] rounded flex justify-between gap-2">
+                    <span className="text-slate-400">{exp.description} <span className="text-slate-500">· {fmtDate(exp.date)}</span></span>
+                    <strong className="text-emerald-400 shrink-0">+{fmtCurrency(exp.convertedAmountInr)}</strong>
                   </div>
                 ))}
                 {drilldownData.sentSettlements.map((set: any) => (
-                  <div key={set.id} style={{ fontSize: "0.9rem", padding: "0.4rem", background: "rgba(255,255,255,0.02)" }}>
-                    Settled to {set.toUser.name} ({new Date(set.date).toLocaleDateString()}): <strong>+₹{parseFloat(set.amount).toFixed(2)}</strong>
+                  <div key={set.id} className="text-[0.85rem] px-2 py-1.5 bg-emerald-500/[0.04] rounded flex justify-between gap-2">
+                    <span className="text-slate-400">Settlement → {set.toUser.name} <span className="text-slate-500">· {fmtDate(set.date)}</span></span>
+                    <strong className="text-emerald-400 shrink-0">+{fmtCurrency(set.amount)}</strong>
                   </div>
                 ))}
               </div>
             </div>
 
             <div>
-              <h4 style={{ color: "var(--color-danger)", marginBottom: "0.5rem" }}>Debts Owed (Decreases balance)</h4>
+              <h4 className="text-red-400 font-medium mb-2">Debts Owed (Decreases balance)</h4>
               <div className="flex flex-col gap-2">
                 {drilldownData.owedSplits.map((split: any) => (
-                  <div key={split.id} style={{ fontSize: "0.9rem", padding: "0.4rem", background: "rgba(255,255,255,0.02)" }}>
-                    Share for "{split.expense.description}" (paid by {split.expense.paidBy.name}): <strong>-₹{parseFloat(split.owedAmount).toFixed(2)}</strong>
+                  <div key={split.id} className="text-[0.85rem] px-2 py-1.5 bg-red-500/[0.04] rounded flex justify-between gap-2">
+                    <span className="text-slate-400">{split.expense.description} <span className="text-slate-500">· paid by {split.expense.paidBy.name}</span></span>
+                    <strong className="text-red-400 shrink-0">−{fmtCurrency(split.owedAmount)}</strong>
                   </div>
                 ))}
                 {drilldownData.receivedSettlements.map((set: any) => (
-                  <div key={set.id} style={{ fontSize: "0.9rem", padding: "0.4rem", background: "rgba(255,255,255,0.02)" }}>
-                    Settled from {set.fromUser.name} ({new Date(set.date).toLocaleDateString()}): <strong>-₹{parseFloat(set.amount).toFixed(2)}</strong>
+                  <div key={set.id} className="text-[0.85rem] px-2 py-1.5 bg-red-500/[0.04] rounded flex justify-between gap-2">
+                    <span className="text-slate-400">Settlement from {set.fromUser.name} <span className="text-slate-500">· {fmtDate(set.date)}</span></span>
+                    <strong className="text-red-400 shrink-0">−{fmtCurrency(set.amount)}</strong>
                   </div>
                 ))}
               </div>

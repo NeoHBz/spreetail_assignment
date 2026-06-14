@@ -5,6 +5,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import GroupDetails from "./pages/GroupDetails";
+import { Button } from "@/components/ui/button";
 
 interface User {
   id: string;
@@ -43,7 +44,7 @@ export function AppContent() {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="text-secondary text-lg">Loading App...</div>
+        <div className="text-slate-400 text-lg">Loading App...</div>
       </div>
     );
   }
@@ -51,46 +52,24 @@ export function AppContent() {
   return (
     <div className="flex flex-col min-h-screen">
       {user && (
-        <header style={{
-          background: "var(--panel-bg)",
-          borderBottom: "1px solid var(--panel-border)",
-          padding: "1rem 2rem",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          backdropFilter: "blur(10px)"
-        }}>
-          <Link to="/" style={{ fontSize: "1.5rem", fontWeight: "bold", color: "var(--text-primary)" }}>
+        <header className="sticky top-0 z-50 h-15 px-8 flex justify-between items-center bg-slate-950/80 border-b border-white/[0.08] backdrop-blur-md">
+          <Link to="/" className="text-indigo-300 font-semibold text-xl tracking-tight no-underline">
             FlatBalance
           </Link>
           <div className="flex items-center gap-4">
-            <span style={{ color: "var(--text-secondary)" }}>Hello, {user.name}</span>
-            <button
+            <span className="text-slate-400">Hello, {user.name}</span>
+            <Button
               onClick={handleLogout}
-              style={{
-                background: "transparent",
-                border: "1px solid var(--color-danger)",
-                color: "var(--color-danger)",
-                padding: "0.4rem 0.8rem",
-                borderRadius: "var(--radius-sm)",
-                cursor: "pointer",
-                transition: "all var(--transition-fast)"
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--color-danger)";
-                e.currentTarget.style.color = "white";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "transparent";
-                e.currentTarget.style.color = "var(--color-danger)";
-              }}
+              variant="outline"
+              size="sm"
+              className="border-red-500/40 text-red-400 hover:bg-red-500/10 hover:border-red-500/60"
             >
               Logout
-            </button>
+            </Button>
           </div>
         </header>
       )}
-      <main style={{ flex: 1 }}>
+      <main className="flex-1">
         <Routes>
           <Route path="/login" element={user ? <Navigate to="/" /> : <Login onLogin={handleLogin} />} />
           <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
