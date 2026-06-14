@@ -86,7 +86,8 @@ model ExpenseSplit {
   user    User?   @relation(fields: [userId], references: [id])
   guest   Guest?  @relation(fields: [guestId], references: [id])
 
-  // Exactly one of userId or guestId should be non-null. Managed at application level or check constraint.
+  // Exactly one of userId or guestId must be non-null.
+  // Enforced at DB level by CHECK constraint in migration 20260614143000.
 }
 
 model Settlement {

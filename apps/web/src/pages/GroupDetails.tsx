@@ -57,6 +57,7 @@ export default function GroupDetails() {
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("INR");
   const [splitType, setSplitType] = useState("equal");
+  const [splitDetails, setSplitDetails] = useState<Record<string, string>>({}); // userId -> amount/pct/weight string
   const [paidBy, setPaidBy] = useState("");
   const [expenseDate, setExpenseDate] = useState("");
 
@@ -133,14 +134,34 @@ export default function GroupDetails() {
 
     // Only include members who were active on the selected expense date
     const selectedDate = expenseDate ? new Date(expenseDate) : null;
-    const activeSplits = group.members
-      .filter((m: Member) => {
-        if (!selectedDate) return !m.leftAt; // if no date chosen, include current members only
-        const joined = new Date(m.joinedAt);
-        const left = m.leftAt ? new Date(m.leftAt) : null;
-        return selectedDate >= joined && (!left || selectedDate <= left);
-      })
-      .map((m: Member) => ({ userId: m.id }));
+    const activeMembers = group.members.filter((m: Member) => {
+      if (!selectedDate) return !m.leftAt;
+      const joined = new Date(m.joinedAt);
+      const left = m.leftAt ? new Date(m.leftAt) : null;
+      return selectedDate >= joined && (!left || selectedDate <= left);
+    });
+
+    // Build splits payload based on split type
+    let splits: object[];
+    if (splitType === "equal") {
+      splits = activeMembers.map((m: Member) => ({ userId: m.id }));
+    } else if (splitType === "unequal") {
+      splits = activeMembers.map((m: Member) => ({
+        userId: m.id,
+        amount: parseFloat(splitDetails[m.id] || "0"),
+      }));
+    } else if (splitType === "percentage") {
+      splits = activeMembers.map((m: Member) => ({
+        userId: m.id,
+        percentage: parseFloat(splitDetails[m.id] || "0"),
+      }));
+    } else {
+      // share (weighted)
+      splits = activeMembers.map((m: Member) => ({
+        userId: m.id,
+        weight: parseFloat(splitDetails[m.id] || "1"),
+      }));
+    }
 
     try {
       const res = await fetch("http://localhost:3001/expenses", {
@@ -157,7 +178,7 @@ export default function GroupDetails() {
           amountOriginalCurrency: currency,
           date: expenseDate,
           splitType,
-          splits: activeSplits,
+          splits,
         }),
       });
       if (!res.ok) {
@@ -168,6 +189,8 @@ export default function GroupDetails() {
       setAmount("");
       setPaidBy("");
       setExpenseDate("");
+      setSplitDetails({});
+      setSplitType("equal");
       loadAll();
     } catch (err: any) {
       setError(err.message);
@@ -629,6 +652,83 @@ export default function GroupDetails() {
                 <option value="percentage">Percentage</option>
                 <option value="share">Share (weighted)</option>
               </select>
+
+              {/* Dynamic per-person split fields for non-equal types */}
+              {splitType !== "equal" && group.members.filter((m: Member) => {
+                if (!expenseDate) return !m.leftAt;
+                const d = new Date(expenseDate);
+                const joined = new Date(m.joinedAt);
+                const left = m.leftAt ? new Date(m.leftAt) : null;
+                return d >= joined && (!left || d <= left);
+              }).length > 0 && (
+                <div style={{
+                  background: "rgba(0,0,0,0.15)",
+                  border: "1px solid var(--panel-border)",
+                  borderRadius: "var(--radius-sm)",
+                  padding: "0.75rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem"
+                }}>
+                  <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase" }}>
+                    {splitType === "unequal" && "Per-person amount (INR)"}
+                    {splitType === "percentage" && "Per-person percentage (must sum to 100%)"}
+                    {splitType === "share" && "Per-person weight (proportional)"}
+                  </span>
+                  {group.members.filter((m: Member) => {
+                    if (!expenseDate) return !m.leftAt;
+                    const d = new Date(expenseDate);
+                    const joined = new Date(m.joinedAt);
+                    const left = m.leftAt ? new Date(m.leftAt) : null;
+                    return d >= joined && (!left || d <= left);
+                  }).map((m: Member) => (
+                    <div key={m.id} className="flex gap-2 items-center">
+                      <span style={{ flex: 1, fontSize: "0.9rem", color: "var(--text-secondary)" }}>{m.name}</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder={splitType === "share" ? "1" : "0"}
+                        value={splitDetails[m.id] ?? ""}
+                        onChange={(e) => setSplitDetails((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                        style={{
+                          width: "100px",
+                          background: "rgba(0,0,0,0.2)",
+                          border: "1px solid var(--panel-border)",
+                          color: "white",
+                          padding: "0.35rem 0.5rem",
+                          borderRadius: "var(--radius-sm)"
+                        }}
+                      />
+                      {splitType === "percentage" && <span style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>%</span>}
+                    </div>
+                  ))}
+                  {/* Running total indicator */}
+                  {splitType === "percentage" && (
+                    <span style={{
+                      fontSize: "0.8rem",
+                      color: Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - 100) < 0.01
+                        ? "var(--color-success)"
+                        : "var(--color-warning)"
+                    }}>
+                      Total: {Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0).toFixed(1)}%
+                      {Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - 100) < 0.01 ? " (valid)" : " (must equal 100%)"}
+                    </span>
+                  )}
+                  {splitType === "unequal" && (
+                    <span style={{
+                      fontSize: "0.8rem",
+                      color: amount && Math.abs(Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0) - parseFloat(amount)) < 0.01
+                        ? "var(--color-success)"
+                        : "var(--color-warning)"
+                    }}>
+                      Total: {Object.values(splitDetails).reduce((s, v) => s + parseFloat(v || "0"), 0).toFixed(2)}
+                      {amount ? ` / ${parseFloat(amount).toFixed(2)}` : ""}
+                    </span>
+                  )}
+                </div>
+              )}
+
               <input
                 type="date"
                 value={expenseDate}

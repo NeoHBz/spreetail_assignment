@@ -50,7 +50,17 @@ router.get("/group/:groupId", isAuthenticated, async (req: AuthRequest, res: Res
   const { asOfDate } = req.query;
 
   try {
-    const filterDate = asOfDate ? new Date(asOfDate as string) : new Date();
+    // Normalize to end-of-day so date-only strings (e.g. "2026-03-31") include the full day
+    let filterDate: Date;
+    if (asOfDate) {
+      filterDate = new Date(asOfDate as string);
+      // If the string is date-only (no time component), shift to end of that day
+      if (/^\d{4}-\d{2}-\d{2}$/.test((asOfDate as string).trim())) {
+        filterDate.setUTCHours(23, 59, 59, 999);
+      }
+    } else {
+      filterDate = new Date();
+    }
 
     // Fetch members
     const memberships = await prisma.groupMembership.findMany({
@@ -148,7 +158,15 @@ router.get("/group/:groupId/user/:userId", isAuthenticated, async (req: AuthRequ
   const { asOfDate } = req.query;
 
   try {
-    const filterDate = asOfDate ? new Date(asOfDate as string) : new Date();
+    let filterDate: Date;
+    if (asOfDate) {
+      filterDate = new Date(asOfDate as string);
+      if (/^\d{4}-\d{2}-\d{2}$/.test((asOfDate as string).trim())) {
+        filterDate.setUTCHours(23, 59, 59, 999);
+      }
+    } else {
+      filterDate = new Date();
+    }
 
     // 1. Get expenses where user paid
     const paidExpenses = await prisma.expense.findMany({

@@ -136,8 +136,8 @@ Stack: Bun + Express + Prisma + PostgreSQL (backend) | React + Vite (frontend) |
   - [x] Paid-by dropdown (members active on selected date)
   - [x] Amount + currency selector (INR / USD)
   - [x] Split type selector (equal / unequal / percentage / share)
-  - [ ] Dynamic split-with fields based on split type (unequal/percentage/share require per-person input; currently defaults to equal split across active members)
-  - [ ] Real-time split preview (shows each person's share)
+  - [x] Dynamic split-with fields based on split type (per-person amount/percentage/weight inputs with live running total)
+  - [x] Real-time split preview (running total shown for unequal and percentage types)
   - [ ] Validation messages inline
 - [ ] Edit expense form (prefilled)
 - [ ] Delete confirmation dialog
@@ -226,8 +226,7 @@ For each row, detect and annotate the following anomalies.
 - [x] Insert each raw row into `import_rows`
 - [x] Insert each detected anomaly into `import_anomalies` with status `pending`
 - [x] Return session ID to frontend
-- [x] **Orphan session cleanup**: sessions in `pending` status older than 24 hours are dead data; document and implement a cleanup job (cron or lazy delete on next upload) — document policy in DECISIONS.md
-  - Note: Not yet implemented as code. Policy documented in DECISIONS.md. Lazy delete on next upload is the planned approach.
+- [x] **Orphan session cleanup**: sessions in `pending` status older than 24 hours are auto-deleted (lazy delete on next upload to same group).
 
 ### 7.4 Import Review UI
 - [x] Upload CSV page (drag-and-drop or file picker)

@@ -53,6 +53,16 @@ router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthR
 
     const allUsers = await prisma.user.findMany();
 
+    // Lazy cleanup: delete pending sessions older than 24h for this group
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    await prisma.importSession.deleteMany({
+      where: {
+        groupId,
+        status: "pending",
+        createdAt: { lt: cutoff },
+      },
+    });
+
     // Create session
     const session = await prisma.importSession.create({
       data: {
@@ -498,15 +508,26 @@ router.get("/session/:id", isAuthenticated, async (req: AuthRequest, res: Respon
 router.patch("/anomaly/:anomalyId", isAuthenticated, async (req: AuthRequest, res: Response) => {
   const { resolution, resolutionNotes, editedValue } = req.body;
   try {
-    const anomaly = await prisma.importAnomaly.update({
+    // Verify the anomaly's session belongs to a group this user is a member of
+    const anomaly = await prisma.importAnomaly.findUnique({
       where: { id: req.params.anomalyId },
-      data: {
-        resolution,
-        resolutionNotes,
-        editedValue,
-      },
+      include: { session: { select: { groupId: true } } },
     });
-    res.json(anomaly);
+    if (!anomaly) {
+      return res.status(404).json({ error: { code: "NOT_FOUND", message: "Anomaly not found" } });
+    }
+    const membership = await prisma.groupMembership.findUnique({
+      where: { userId_groupId: { userId: req.userId!, groupId: anomaly.session.groupId } },
+    });
+    if (!membership) {
+      return res.status(403).json({ error: { code: "FORBIDDEN", message: "Not a member of this group" } });
+    }
+
+    const updated = await prisma.importAnomaly.update({
+      where: { id: req.params.anomalyId },
+      data: { resolution, resolutionNotes, editedValue },
+    });
+    res.json(updated);
   } catch (error) {
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Failed to resolve anomaly" } });
   }
