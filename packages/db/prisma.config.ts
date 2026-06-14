@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import path from "path";
 
 const envPath = path.join(__dirname, "../../.env");
-dotenv.config({ path: envPath });
+dotenv.config({ path: envPath, quiet: true });
 
 export default defineConfig({
   datasource: {
