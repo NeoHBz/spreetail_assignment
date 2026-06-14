@@ -286,12 +286,16 @@ router.post("/upload", isAuthenticated, upload.single("file"), async (req: AuthR
               description: `Payer Dev is visiting (non-member) and can pay but doesn't have regular group membership.`,
               resolution: "auto_fixed",
               resolutionNotes: "Allowed visitor payment",
+              // candidate* lets the UI add this existing user to the group and offer
+              // them as a mapping target for other rows (see ImportPanel addedMembers)
+              editedValue: { candidateUserId: matchedUser.id, candidateName: matchedUser.name },
             });
           } else {
             rowAnomalies.push({
               anomalyType: "non_member_payer",
               description: `Payer "${matchedUser.name}" is not a member of this group.`,
               resolution: "pending",
+              editedValue: { candidateUserId: matchedUser.id, candidateName: matchedUser.name },
             });
           }
         } else {
@@ -699,7 +703,7 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
         // typed for a malformed / zero / comma-laden amount.
         const amountOverrideAnom = rowAnoms.find(
           (a) =>
-            ["sub_paisa_precision", "malformed_amount", "zero_amount", "whitespace_amount"].includes(a.anomalyType) &&
+            ["sub_paisa_precision", "malformed_amount", "zero_amount", "whitespace_amount", "negative_amount"].includes(a.anomalyType) &&
             (a.editedValue as any)?.amount != null
         );
         if (amountOverrideAnom) {
@@ -727,8 +731,8 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
         // Calculate split with members
         let splitWithNames: string[] = raw.split_with ? raw.split_with.split(";").map((s: string) => s.trim()) : [];
 
-        // Apply pre-join / post-exit removals
-        const postExitSplits = rowAnoms.filter((a) => a.anomalyType === "post_exit_split");
+        // Apply pre-join / post-exit removals (skip if user chose to keep in split)
+        const postExitSplits = rowAnoms.filter((a) => a.anomalyType === "post_exit_split" && !(a.editedValue as any)?.keepInSplit);
         for (const pe of postExitSplits) {
           const removeId = (pe.editedValue as any)?.removeUser;
           if (removeId) {
