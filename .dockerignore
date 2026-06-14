@@ -1,0 +1,23 @@
+# Keep the build context small and reproducible.
+**/node_modules
+**/dist
+**/build
+**/.next
+**/.cache
+**/*.tsbuildinfo
+**/*.log
+
+.git
+.gitignore
+
+# Committed Postgres data dir (huge) — db runs from a named volume instead.
+docker/postgres/pg_data
+
+# Secrets / local config — env is provided via compose, not baked into images.
+.env
+**/.env
+**/.env.*
+
+**/.DS_Store
+stitch_flatbalance_expense_tracker
+csv_inputs
