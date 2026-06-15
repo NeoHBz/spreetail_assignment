@@ -13,10 +13,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // Keep the /api prefix end-to-end: the API mounts its routes under /api,
+      // matching the reverse proxy in production. No prefix stripping.
       "/api": {
         target: "http://localhost:3001",
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, "")
+        changeOrigin: true
       }
     }
   }

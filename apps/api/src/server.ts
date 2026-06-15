@@ -16,18 +16,22 @@ const port = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Routes
-app.use("/auth", authRouter);
-app.use("/groups", groupsRouter);
-app.use("/expenses", expensesRouter);
-app.use("/settlements", settlementsRouter);
-app.use("/balances", balancesRouter);
-app.use("/import", importRouter);
-app.use("/fx-rates", fxRouter);
+// Routes are mounted under /api so the prefix is consistent end-to-end:
+// browser -> reverse proxy (NPM) / Vite dev proxy -> API, with no rewriting.
+const api: express.Router = express.Router();
+api.use("/auth", authRouter);
+api.use("/groups", groupsRouter);
+api.use("/expenses", expensesRouter);
+api.use("/settlements", settlementsRouter);
+api.use("/balances", balancesRouter);
+api.use("/import", importRouter);
+api.use("/fx-rates", fxRouter);
 
-app.get("/health", (req, res) => {
+api.get("/health", (req, res) => {
   res.json({ status: "healthy" });
 });
+
+app.use("/api", api);
 
 app.listen(port, () => {
   Logger.info(`API server running on port ${port}`);
