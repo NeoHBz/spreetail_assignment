@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: spreetail_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: spreetail
+    volumes:
+      - ./pg_data:/var/lib/postgresql/data
+      # Mount configuration files to a temporary location to avoid blocking initdb
+      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+    command:
+      [
+        "postgres",
+        "-c",
+        "config_file=/etc/postgresql/postgresql.conf",
+        "-c",
+        "hba_file=/etc/postgresql/pg_hba.conf",
+      ]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d spreetail"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+      - nginx_proxy_shared
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: spreetail_api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://postgres:password@db:5432/spreetail?schema=public"
+      JWT_SECRET: "supersecretkey"
+      PORT: "3001"
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - default
+      - nginx_proxy_shared
+
+networks:
+  nginx_proxy_shared:
+    external: true
