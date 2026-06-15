@@ -42,7 +42,7 @@ services:
       args:
         # Baked into the client bundle at build time. Must be reachable from the
         # browser, i.e. the api's published host port (not the compose hostname).
-        VITE_API_URL: "http://localhost:${API_PORT}"
+        VITE_API_URL: "http://localhost:${API_PORT}/api"
     container_name: spreetail_web
     restart: unless-stopped
     ports:
