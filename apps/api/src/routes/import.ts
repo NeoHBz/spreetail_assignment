@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
+import PDFDocument from "pdfkit";
 import { prisma } from "@spreetail/db";
 import { Logger, splitEqual, splitUnequal, splitPercentage, splitShare } from "@spreetail/shared";
 import { AuthRequest, isAuthenticated } from "../middleware/auth";
@@ -1065,7 +1066,7 @@ router.post("/session/:id/commit", isAuthenticated, async (req: AuthRequest, res
   }
 });
 
-// GET import report — returns anomaly + row summary as downloadable JSON
+// GET import report — streams a PDF with anomaly details
 router.get("/session/:id/report", isAuthenticated, async (req: AuthRequest, res: Response) => {
   try {
     const session = await prisma.importSession.findUnique({
@@ -1080,44 +1081,245 @@ router.get("/session/:id/report", isAuthenticated, async (req: AuthRequest, res:
       return res.status(404).json({ error: { code: "NOT_FOUND", message: "Import session not found" } });
     }
 
-    const report = {
-      sessionId: session.id,
-      filename: session.filename,
-      status: session.status,
-      generatedAt: new Date().toISOString(),
-      summary: {
-        totalRows: session.rows.length,
-        committed: session.rows.filter((r) => r.status === "committed").length,
-        rejected: session.rows.filter((r) => r.status === "rejected").length,
-        staged: session.rows.filter((r) => r.status === "staged").length,
-        totalAnomalies: session.anomalies.length,
-        autoFixed: session.anomalies.filter((a) => a.resolution === "auto_fixed").length,
-        userApproved: session.anomalies.filter((a) => a.resolution === "user_approved").length,
-        userRejected: session.anomalies.filter((a) => a.resolution === "user_rejected").length,
-        pending: session.anomalies.filter((a) => a.resolution === "pending").length,
-      },
-      anomalies: session.anomalies.map((a) => ({
-        rowNumber: a.rowNumber,
-        anomalyType: a.anomalyType,
-        description: a.description,
-        resolution: a.resolution,
-        resolutionNotes: a.resolutionNotes,
-        editedValue: a.editedValue,
-      })),
-      rows: session.rows.map((r) => ({
-        rowNumber: r.rowNumber,
-        status: r.status,
-        mappedExpenseId: r.mappedExpenseId,
-        mappedSettlementId: r.mappedSettlementId,
-      })),
+    // Derive download filename: strip .csv extension, append _REPORT.pdf
+    const baseName = session.filename.replace(/\.csv$/i, "");
+    const pdfFilename = `${baseName}_REPORT.pdf`;
+
+    const totalRows      = session.rows.length;
+    const committedCount = session.rows.filter((r) => r.status === "committed").length;
+    const rejectedCount  = session.rows.filter((r) => r.status === "rejected").length;
+    const stagedCount    = session.rows.filter((r) => r.status === "staged").length;
+    const totalAnomalies = session.anomalies.length;
+    const autoFixed      = session.anomalies.filter((a) => a.resolution === "auto_fixed").length;
+    const userApproved   = session.anomalies.filter((a) => a.resolution === "user_approved").length;
+    const userRejected   = session.anomalies.filter((a) => a.resolution === "user_rejected").length;
+    const pending        = session.anomalies.filter((a) => a.resolution === "pending").length;
+    const generatedAt    = new Date().toISOString();
+
+    // ── PDF layout constants ─────────────────────────────────────────────────────
+    const C = {
+      PAGE_W: 595.28,
+      MARGIN: 24,
+      BRAND: "#6366f1",    // indigo  (Type column)
+      AUTO: "#f59e0b",     // amber   (Auto-fixed)
+      OK: "#10b981",       // emerald (Approved)
+      WARN: "#f97316",     // orange  (Pending)
+      ERR: "#ef4444",      // red
+      MUTED: "#64748b",    // slate-500
+      TEXT: "#1e293b",     // slate-800
+      LIGHT: "#f8fafc",    // slate-50
+    };
+    const contentWidth = C.PAGE_W - C.MARGIN * 2;
+
+    // Resolution → display label + colour
+    const resLabel = (r: string) => {
+      switch (r) {
+        case "auto_fixed":    return { label: "Auto-fixed",     color: C.AUTO };
+        case "user_approved": return { label: "Approved",       color: C.OK   };
+        case "user_rejected": return { label: "Skipped",        color: C.MUTED };
+        case "pending":       return { label: "Pending",        color: C.WARN };
+        default:              return { label: r.replace(/_/g, " "), color: C.MUTED };
+      }
     };
 
-    res.setHeader("Content-Disposition", `attachment; filename="import-report-${session.id}.json"`);
-    res.setHeader("Content-Type", "application/json");
-    res.json(report);
+    const anomalyLabel = (t: string) =>
+      t.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+    // ── Build PDF ────────────────────────────────────────────────────────────────
+    const doc = new PDFDocument({ size: "A4", margin: C.MARGIN, bufferPages: true });
+
+    res.setHeader("Content-Disposition", `attachment; filename="${pdfFilename}"`);
+    res.setHeader("Content-Type", "application/pdf");
+    doc.pipe(res);
+
+    // ── Page 1: header + summary ─────────────────────────────────────────────────
+    const pageTop = C.MARGIN;
+
+    // Title bar
+    doc.rect(0, 0, C.PAGE_W, 72).fill(C.BRAND);
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(18)
+      .text("Import Anomaly Report", C.MARGIN, 24, { width: contentWidth });
+    doc.fillColor("rgba(255,255,255,0.7)").font("Helvetica").fontSize(9)
+      .text(`Generated ${generatedAt}`, C.MARGIN, 48, { width: contentWidth });
+
+    doc.moveDown(2);
+
+    // Meta block
+    doc.fillColor(C.MUTED).font("Helvetica").fontSize(9)
+      .text("FILE", { continued: false });
+    doc.fillColor(C.TEXT).font("Helvetica-Bold").fontSize(11)
+      .text(session.filename);
+    doc.fillColor(C.MUTED).font("Helvetica").fontSize(9)
+      .text(`Session ID: ${session.id}   ·   Status: ${session.status.toUpperCase()}`, { characterSpacing: 0.2 });
+
+    doc.moveDown(1.5);
+
+    // ── Summary grid (2 × 2 tiles) ────────────────────────────────────────────────
+    const tileW  = (contentWidth - 10) / 2;
+    const tileH  = 72;
+    const tileR  = 6;
+    const tileX1 = C.MARGIN;
+    const tileX2 = C.MARGIN + tileW + 10;
+    const tileY  = doc.y;
+
+    const drawTile = (
+      x: number, y: number,
+      bigNum: number, bigColor: string,
+      label: string,
+      sub?: string
+    ) => {
+      doc.roundedRect(x, y, tileW, tileH, tileR).fill("#f1f5f9");
+      doc.fillColor(bigColor).font("Helvetica-Bold").fontSize(28)
+        .text(String(bigNum), x + 14, y + 12, { width: tileW - 28 });
+      doc.fillColor(C.TEXT).font("Helvetica-Bold").fontSize(10)
+        .text(label, x + 14, y + 44, { width: tileW - 28 });
+      if (sub) {
+        doc.fillColor(C.MUTED).font("Helvetica").fontSize(8)
+          .text(sub, x + 14, y + 57, { width: tileW - 28 });
+      }
+    };
+
+    drawTile(tileX1, tileY, totalRows,      C.BRAND,  "Total Rows",      `${committedCount} committed · ${rejectedCount} rejected · ${stagedCount} staged`);
+    drawTile(tileX2, tileY, totalAnomalies, C.ERR,    "Anomalies Found", `${autoFixed} auto-fixed · ${userApproved} approved · ${userRejected} skipped · ${pending} pending`);
+
+    doc.y = tileY + tileH + 20;
+
+    // ── Anomaly breakdown bar ──────────────────────────────────────────────────────
+    const barY   = doc.y;
+    const barH   = 12;
+    const barR   = 4;
+    const total  = totalAnomalies || 1;
+    const segments = [
+      { count: autoFixed,    color: C.AUTO, label: "Auto-fixed" },
+      { count: userApproved, color: C.OK,   label: "Approved"   },
+      { count: userRejected, color: C.MUTED,label: "Skipped"    },
+      { count: pending,      color: C.WARN, label: "Pending"    },
+    ];
+
+    let barX = C.MARGIN;
+    for (const seg of segments) {
+      if (seg.count === 0) continue;
+      const segW = (seg.count / total) * contentWidth;
+      doc.rect(barX, barY, segW, barH).fill(seg.color);
+      barX += segW;
+    }
+
+    // legend
+    let legX = C.MARGIN;
+    const legY = barY + barH + 6;
+    doc.fontSize(8);
+    for (const seg of segments) {
+      if (seg.count === 0) continue;
+      doc.rect(legX, legY + 2, 8, 8).fill(seg.color);
+      doc.fillColor(C.MUTED).font("Helvetica").text(`${seg.count} ${seg.label}`, legX + 12, legY, { continued: false });
+      legX += doc.widthOfString(`${seg.count} ${seg.label}`) + 30;
+    }
+
+    doc.y = legY + 18;
+    doc.moveDown(1);
+
+    // ── Section header ────────────────────────────────────────────────────────────
+    const sectionY = doc.y;
+    doc.rect(C.MARGIN, sectionY, contentWidth, 22).fill(C.BRAND);
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(9)
+      .text("ANOMALY DETAILS", C.MARGIN + 10, sectionY + 7, { width: contentWidth - 20, lineBreak: false });
+    doc.y = sectionY + 22;
+
+    // Column definitions
+    const COL = { row: C.MARGIN, type: C.MARGIN + 50, desc: C.MARGIN + 165, res: C.MARGIN + 385, notes: C.MARGIN + 455 };
+    const COL_W = { row: 48, type: 110, desc: 215, res: 65, notes: contentWidth - 455 };
+
+    // Alternating column stripe colours (white / light-grey / white / light-grey / white)
+    const STRIPE = ["#ffffff", "#f1f5f9", "#ffffff", "#f1f5f9", "#ffffff"];
+    const COLS = [
+      { x: COL.row,   w: COL_W.row,   label: "ROW"         },
+      { x: COL.type,  w: COL_W.type,  label: "TYPE"        },
+      { x: COL.desc,  w: COL_W.desc,  label: "DESCRIPTION" },
+      { x: COL.res,   w: COL_W.res,   label: "RESOLUTION"  },
+      { x: COL.notes, w: COL_W.notes, label: "NOTES"       },
+    ];
+    const PAD = 4;  // horizontal text padding inside each cell
+    const VPAD = 7; // vertical text offset from row top (keeps descenders clear)
+
+    // Column header row
+    const hdrY = doc.y;
+    const HDR_H = 22;
+    COLS.forEach((col, i) => {
+      doc.rect(col.x, hdrY, col.w, HDR_H).fill(STRIPE[i]);
+    });
+    doc.fillColor(C.MUTED).font("Helvetica-Bold").fontSize(7.5);
+    COLS.forEach((col) => {
+      doc.text(col.label, col.x + PAD, hdrY + VPAD, { width: col.w - PAD * 2, lineBreak: false });
+    });
+    doc.y = hdrY + HDR_H;
+    doc.moveTo(C.MARGIN, doc.y).lineTo(C.MARGIN + contentWidth, doc.y).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
+    doc.y += 2;
+
+    // ── Anomaly rows ──────────────────────────────────────────────────────────────
+    for (const anom of session.anomalies) {
+      const rl = resLabel(anom.resolution);
+
+      // Estimate row height — description can wrap
+      const descLines = Math.ceil(doc.fontSize(8).widthOfString(anom.description) / (COL_W.desc - PAD * 2));
+      const estH = Math.max(descLines, 1) * 10 + 20; // +20 gives VPAD top + 13px bottom clearance
+
+      // Page break guard
+      if (doc.y + estH > doc.page.height - C.MARGIN - 20) {
+        doc.addPage();
+        doc.y = C.MARGIN;
+      }
+
+      const rowY = doc.y;
+
+      // Vertical column stripes — same alternating pattern on every row
+      COLS.forEach((col, i) => {
+        doc.rect(col.x, rowY, col.w, estH).fill(STRIPE[i]);
+      });
+
+      doc.fillColor(C.TEXT).font("Helvetica-Bold").fontSize(8)
+        .text(`#${anom.rowNumber}`, COL.row + PAD, rowY + VPAD, { width: COL_W.row - PAD * 2, lineBreak: false });
+
+      doc.fillColor(C.BRAND).font("Helvetica").fontSize(7.5)
+        .text(anomalyLabel(anom.anomalyType), COL.type + PAD, rowY + VPAD, { width: COL_W.type - PAD * 2 });
+
+      doc.fillColor(C.TEXT).font("Helvetica").fontSize(8)
+        .text(anom.description, COL.desc + PAD, rowY + VPAD, { width: COL_W.desc - PAD * 2 });
+
+      doc.fillColor(rl.color).font("Helvetica-Bold").fontSize(7.5)
+        .text(rl.label, COL.res + PAD, rowY + VPAD, { width: COL_W.res - PAD * 2, lineBreak: false });
+
+      if (anom.resolutionNotes) {
+        doc.fillColor(C.MUTED).font("Helvetica").fontSize(7.5)
+          .text(anom.resolutionNotes, COL.notes + PAD, rowY + VPAD, { width: COL_W.notes - PAD * 2 });
+      }
+
+      doc.y = rowY + estH;
+      doc.moveTo(C.MARGIN, doc.y).lineTo(C.MARGIN + contentWidth, doc.y).strokeColor("#e2e8f0").lineWidth(0.3).stroke();
+    }
+
+    // ── Footer on every page ──────────────────────────────────────────────────────
+    const pages = doc.bufferedPageRange();
+    for (let i = 0; i < pages.count; i++) {
+      doc.switchToPage(pages.start + i);
+      // Keep footer above the bottom margin so doc.y after the text() call
+      // stays below page.maxY() — otherwise PDFKit auto-adds a blank page.
+      const footerY = doc.page.height - C.MARGIN - 14;
+      doc.fillColor(C.MUTED).font("Helvetica").fontSize(7.5)
+        .text(
+          `Page ${i + 1} of ${pages.count}  ·  ${session.filename}`,
+          C.MARGIN,
+          footerY,
+          { width: contentWidth, align: "center" }
+        );
+      doc.y = footerY; // reset cursor so it can't trigger another addPage()
+    }
+
+    doc.end();
   } catch (error) {
     Logger.error("Failed to generate import report", error);
-    res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Failed to generate report" } });
+    if (!res.headersSent) {
+      res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Failed to generate report" } });
+    }
   }
 });
 

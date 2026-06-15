@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { Logger } from "@spreetail/shared";
+import { prisma } from "@spreetail/db";
 import authRouter from "./routes/auth";
 import groupsRouter from "./routes/groups";
 import expensesRouter from "./routes/expenses";
@@ -27,13 +28,26 @@ api.use("/balances", balancesRouter);
 api.use("/import", importRouter);
 api.use("/fx-rates", fxRouter);
 
-api.get("/health", (req, res) => {
-  res.json({ status: "healthy" });
+api.get("/health", async (req, res) => {
+  let dbStatus: "connected" | "error" = "error";
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    dbStatus = "connected";
+  } catch {
+    dbStatus = "error";
+  }
+  res.json({ status: "healthy", db: dbStatus, datetime: new Date().toISOString() });
 });
 
 app.use("/api", api);
 
-app.listen(port, () => {
+app.listen(port, async () => {
   Logger.info(`API server running on port ${port}`);
+  try {
+    await prisma.$connect();
+    Logger.info("Database connected successfully");
+  } catch (err) {
+    Logger.error("Database connection failed", err);
+  }
 });
 export default app;

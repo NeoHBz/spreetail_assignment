@@ -1,5 +1,5 @@
 import { API_URL } from "@/lib/api";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -336,6 +336,8 @@ function RowPreview({ rawRow, label, highlight = false }: RowPreviewProps) {
 // ─── Main component ─────────────────────────────────────────────────────────────
 export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense }: ImportPanelProps) {
   const [file, setFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [session, setSession] = useState<ImportSession | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -368,6 +370,39 @@ export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense
     if (e.target.files?.[0]) setFile(e.target.files[0]);
   };
 
+  const dragCounter = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current += 1;
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current -= 1;
+    if (dragCounter.current === 0) setIsDragging(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setIsDragging(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) {
+      if (!dropped.name.toLowerCase().endsWith(".csv")) {
+        setError("Only CSV files are supported.");
+        return;
+      }
+      setFile(dropped);
+      setError("");
+    }
+  }, []);
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return;
@@ -391,6 +426,22 @@ export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDownloadReport = async () => {
+    if (!session) return;
+    const res = await fetch(`${API_URL}/import/session/${session.id}/report`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    const baseName = session.filename.replace(/\.csv$/i, "");
+    a.href     = url;
+    a.download = `${baseName}_REPORT.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const patchAnomaly = async (anomalyId: string, resolution: string, editedValue?: any) => {
@@ -1707,23 +1758,74 @@ export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense
       {!session ? (
         /* ── Upload form ── */
         <div className="glass-card">
-          <form onSubmit={handleUpload} className="flex gap-4 items-center flex-wrap">
-            <label className={`flex items-center gap-2.5 bg-slate-950/60 border-dashed rounded-lg px-4 py-2.5 cursor-pointer text-sm transition-colors ${
-              file
-                ? "border border-indigo-500/50 text-slate-100"
-                : "border border-white/15 text-slate-500"
-            }`}>
-              <span>📂</span>
-              <span>{file ? file.name : "Choose CSV file…"}</span>
-              <input type="file" accept=".csv" onChange={handleFileChange} required className="hidden" />
-            </label>
+          <form onSubmit={handleUpload} className="flex flex-col gap-4">
+            {/* Drop zone */}
+            <div
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-8 py-12 cursor-pointer transition-all duration-200 select-none ${
+                isDragging
+                  ? "border-sky-400 bg-sky-500/10 scale-[1.01]"
+                  : file
+                  ? "border-indigo-500/60 bg-indigo-500/[0.05] hover:bg-indigo-500/10"
+                  : "border-white/15 bg-black/20 hover:border-white/30 hover:bg-white/[0.03]"
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+
+              {file ? (
+                <>
+                  <div className="flex items-center justify-center w-12 h-12 rounded-full bg-indigo-500/15 border border-indigo-500/30">
+                    <svg className="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-semibold text-slate-100">{file.name}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{(file.size / 1024).toFixed(1)} KB</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                    className="text-xs text-slate-500 hover:text-red-400 transition-colors underline-offset-2 hover:underline"
+                  >
+                    Remove file
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className={`flex items-center justify-center w-12 h-12 rounded-full border transition-colors duration-200 ${isDragging ? "bg-sky-500/20 border-sky-400/50" : "bg-white/[0.04] border-white/10"}`}>
+                    <svg className={`w-6 h-6 transition-colors duration-200 ${isDragging ? "text-sky-400" : "text-slate-500"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                  </div>
+                  <div className="text-center">
+                    <p className={`text-sm font-medium transition-colors duration-200 ${isDragging ? "text-sky-300" : "text-slate-300"}`}>
+                      {isDragging ? "Drop your CSV here" : "Drag & drop your CSV here"}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">or click to browse</p>
+                  </div>
+                  <span className="text-[0.7rem] text-slate-600 font-mono">.csv files only</span>
+                </>
+              )}
+            </div>
+
             <Button
               type="submit"
               disabled={loading || !file}
-              className={`font-bold ${
+              className={`w-full font-bold transition-colors ${
                 file
                   ? "bg-sky-500 hover:bg-sky-600 text-white border-transparent"
-                  : "bg-sky-500/15 text-slate-400 border-transparent"
+                  : "bg-sky-500/10 text-slate-500 border border-sky-500/20 cursor-not-allowed"
               }`}
             >
               {loading ? "Parsing…" : "Start Import"}
@@ -1772,7 +1874,14 @@ export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense
                 </div>
               </div>
 
-              <div className="flex gap-2 shrink-0">
+              <div className="flex gap-2 shrink-0 items-center">
+                <Button
+                  variant="outline"
+                  onClick={handleDownloadReport}
+                  className="border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/10 whitespace-nowrap font-medium"
+                >
+                  ↓ Download Anomaly Report
+                </Button>
                 <Button
                   variant="outline"
                   onClick={() => { setSession(null); setFile(null); setAutoFixedSkipped(new Set()); setError(""); }}
