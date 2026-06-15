@@ -55,7 +55,29 @@ This log lists the significant architectural decisions, alternative options cons
 - **Scope decision**: Per-group only (not cross-group). Default resolution is Skip (safer), with an explicit "Import Anyway" override. Recurring detection is pattern-based (derived from the data) rather than a keyword whitelist; keywords only *lower the confidence threshold*. No schema migration was required — `anomalyType` is a free-form string and the commit path already handles `user_rejected` (skip) / `user_approved` (import).
 
 ## 10. Single-Payer / Single-Receiver Fields (no multi-select)
+
 - **Context**: The expense form's `Paid By` and the settlement form's `Received By` are both single-select. Apps like Splitwise support *multi-payer* expenses (two people jointly front the money for one expense), so the question arose whether these fields should be multi-select.
 - **Option A**: Model `Paid By` (and `Received By`) as multi-select to support jointly-paid expenses and split settlements.
 - **Option B**: Keep both as single-select — one payer per expense, one receiver per settlement.
 - **Decision**: Option B. The CSV's `paid_by` column holds exactly one name on every row (never the `;`-delimited list format used by `split_with`/`split_details`), and a settlement is inherently a one-payer-to-one-receiver transfer (e.g. "Rohan paid Aisha back"). Multi-payer is a real product feature, **but this dataset never exercises it, and the assignment says to "support every split type that appears in the CSV."** Splitting is multi-party (`split_with`); *paying* is not. Adding multi-payer support would mean a join table instead of the single `Expense.paidByUserId` FK and would complicate balance math for zero rows of actual benefit, so it was deliberately left out of scope.
+
+## 11. Balance Debt Minimization Algorithm
+
+- **Context**: Raw pairwise balance computation produces one net figure per member. Naively, settling N members requires up to N(N-1)/2 transactions. The question was whether to display raw per-pair figures or reduce them.
+- **Option A**: Display raw pairwise balances (each member vs. each other member).
+- **Option B**: Run a greedy debt-minimization pass that produces the minimum number of transactions to zero all balances.
+- **Decision**: Option B. The greedy O(n log n) algorithm (`minimizeDebts` in `balances.ts`) matches the largest creditor with the largest debtor repeatedly until all balances are zero. This produces the fewest suggested settlements shown in the UI without requiring any extra data — it runs entirely on the already-computed balance map.
+
+## 12. Point-in-Time Balance Filtering (`asOfDate`)
+
+- **Context**: The balance endpoint needed to support historical snapshots (e.g. "what did balances look like at end of March?") to answer questions about Meera's settlement before she left.
+- **Option A**: Always compute balances over all-time data.
+- **Option B**: Accept an optional `?asOfDate=YYYY-MM-DD` query param and filter expenses and settlements to on-or-before that date.
+- **Decision**: Option B. The date string is normalized to end-of-day UTC (`setUTCHours(23, 59, 59, 999)`) so "2026-03-31" captures everything through the end of that day. The frontend exposes this as a date picker in the group balances panel (`GroupDetails.tsx`).
+
+## 13. Payer Name Case Inconsistency — Auto-Fix vs. Surface to User
+
+- **Context**: Some CSV rows had payer names in non-canonical casing (e.g. `rohan` instead of `Rohan`). The question was whether to surface this as a pending anomaly requiring user confirmation or auto-correct it.
+- **Option A**: Surface `case_inconsistency_payer` as a pending anomaly for user review.
+- **Option B**: Auto-fix by normalizing to the canonical name found in the users table.
+- **Decision**: Option B. Payer name casing is non-ambiguous: the canonical form is always deterministic from the users table (first-found match, case-insensitive). There is no scenario where the user's intended payer differs from the normalized result. Auto-fixing keeps the review queue focused on genuinely ambiguous anomalies. The same normalization pass also handles missing-year dates (e.g. "Mar 14" → "Mar 14, 2026"), treating the current import year as the default.
