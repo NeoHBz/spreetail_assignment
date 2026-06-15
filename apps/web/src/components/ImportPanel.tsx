@@ -125,6 +125,7 @@ const SECTION_TITLES: Record<string, string> = {
 // (see `addedMembers`). Resolving the source before its consumers keeps the dropdowns
 // populated in the order the user works down the list.
 const SECTION_ORDER: string[] = [
+  "non_member_split",
   "cross_import_duplicate", "recurring_period_duplicate", "possible_double_entry",
   "conflicting_duplicate", "exact_duplicate", "ambiguous_date",
   "non_member_payer", "missing_payer", "unknown_payer", "inactive_member_payer",
@@ -132,7 +133,7 @@ const SECTION_ORDER: string[] = [
   "settlement_candidate", "invalid_date",
   "negative_amount", "missing_year", "missing_currency", "sub_paisa_precision",
   "whitespace_amount", "whitespace_payer", "case_inconsistency_payer",
-  "visitor_payer", "post_exit_split", "pre_join_split", "non_member_split",
+  "visitor_payer", "post_exit_split", "pre_join_split",
   "type_detail_mismatch",
 ];
 
@@ -638,6 +639,9 @@ export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense
   const resolvedUserCount = approvedCount + skippedCount;
   const ambiguousDatePending = session?.anomalies.filter(
     (a) => a.anomalyType === "ambiguous_date" && a.resolution === "pending"
+  ) ?? [];
+  const nonMemberSplitNeedingApproval = session?.anomalies.filter(
+    (a) => a.anomalyType === "non_member_split" && (a.resolution === "auto_fixed" || a.resolution === "pending")
   ) ?? [];
 
   const filteredAnomalies = session?.anomalies.filter((a) => {
@@ -1838,6 +1842,29 @@ export default function ImportPanel({ groupId, onImportComplete, onJumpToExpense
                       {section.count}
                     </span>
                   </div>
+
+                  {/* Section-level bulk policy: approve or skip all guests-in-split auto-fixes at once */}
+                  {section.type === "non_member_split" && nonMemberSplitNeedingApproval.length >= 2 && (
+                    <div className="glass-card p-4 border border-indigo-500/30 flex items-center gap-3 flex-wrap">
+                      <span className="text-sm text-indigo-300 font-semibold">{nonMemberSplitNeedingApproval.length} guests in split</span>
+                      <span className="text-sm text-slate-400">— non-members auto-removed from splits:</span>
+                      <ActionBtn
+                        color="#10b981"
+                        tooltip="Confirms the auto-fix for all rows — non-members are removed from the split."
+                        onClick={() => handleResolveMany(nonMemberSplitNeedingApproval.map((a) => a.id), "user_approved")}
+                      >
+                        Approve All {nonMemberSplitNeedingApproval.length}
+                      </ActionBtn>
+                      <ActionBtn
+                        color="#64748b"
+                        outline
+                        tooltip="Overrides the auto-fix and excludes all these rows from the import."
+                        onClick={() => handleSkipAutoFixedMany(nonMemberSplitNeedingApproval.map((a) => a.id))}
+                      >
+                        Override: Skip All {nonMemberSplitNeedingApproval.length}
+                      </ActionBtn>
+                    </div>
+                  )}
 
                   {/* Section-level bulk policy: apply one DD/MM vs MM/DD reading to all ambiguous dates */}
                   {section.type === "ambiguous_date" && ambiguousDatePending.length >= 2 && (
